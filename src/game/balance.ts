@@ -7,6 +7,8 @@ import type { PromptKind, RuneType } from './types.ts'
 
 /** 1 戦の制限時間（ミリ秒）。 */
 export const BATTLE_TIME_MS = 30_000
+/** 一時停止から再開した直後に、入力を受け付けない時間（ミリ秒）。 */
+export const RESUME_INPUT_LOCK_MS = 500
 
 // --- 大技ゲージ ---
 /** ゲージ 1 本ぶんの量。1 本で「大技」、2 本で「奥義」。 */

@@ -1,5 +1,5 @@
 /* =========================================================
-   三十秒の言霊 — 和紙と墨と朱印をイメージした配色
+   幻影討伐部 — 和紙と墨と朱印をイメージした配色
    ========================================================= */
 
 :root {
@@ -1400,7 +1400,7 @@ code {
 }
 
 /* =========================================================
-   鍛冶場
+   技術室
    ========================================================= */
 .shard-count {
   color: var(--ink-soft);
@@ -1801,4 +1801,134 @@ code {
       opacity: 0;
     }
   }
+}
+
+/* =========================================================
+   校内の画面の共通枠（タブと「戻る」）
+   ========================================================= */
+.shell {
+  display: grid;
+  gap: 18px;
+}
+
+.shell-head {
+  display: grid;
+  gap: 10px;
+}
+
+.club-name {
+  font-family: var(--font-display);
+  font-size: 1.1rem;
+  letter-spacing: 0.2em;
+  color: var(--ink-soft);
+}
+
+.tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  border-bottom: 2px solid var(--ink);
+}
+
+.tab {
+  padding: 8px 16px;
+  border: 1px solid var(--line);
+  border-bottom: 0;
+  border-radius: 10px 10px 0 0;
+  background: var(--paper-sunk);
+  color: var(--ink-soft);
+  cursor: pointer;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.tab:hover {
+  color: var(--ink);
+}
+
+.tab.is-active {
+  border-color: var(--ink);
+  background: var(--ink);
+  color: var(--paper);
+  font-weight: 700;
+}
+
+.room-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.room-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 20px;
+  align-items: start;
+}
+
+.room-links {
+  grid-column: 1 / -1;
+}
+
+.link-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.board-actions {
+  justify-content: flex-end;
+  margin-bottom: 12px;
+}
+
+.placeholder-note {
+  color: var(--ink-soft);
+  font-size: 0.9rem;
+}
+
+.planned-list {
+  margin-top: 10px;
+  padding-left: 1.4em;
+  list-style: disc;
+  color: var(--ink-soft);
+  font-size: 0.9rem;
+}
+
+.forge > .shard-count {
+  margin-bottom: 14px;
+}
+
+/* ---- ダイアログの追加の形 ---- */
+.dialog.small {
+  width: min(440px, 100%);
+}
+
+.dialog.wide {
+  width: min(900px, 100%);
+}
+
+.dialog-body {
+  margin: 12px 0 20px;
+  color: var(--ink-soft);
+}
+
+.dialog-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.resume-lock {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  z-index: 10;
+  padding: 8px 22px;
+  border-radius: 999px;
+  background: var(--ink);
+  color: var(--paper);
+  font-weight: 700;
+  transform: translate(-50%, -50%);
 }

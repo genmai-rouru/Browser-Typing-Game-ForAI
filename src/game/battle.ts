@@ -9,6 +9,7 @@ import {
   GAUGE_PER_BAR,
   MODE_STROKE_MULTIPLIER,
   NO_MISS_MULTIPLIER,
+  RESUME_INPUT_LOCK_MS,
   RESIST_MULTIPLIER,
   RUNE_CHAIN_BONUS,
   RUNE_CHARGE_BONUS,
@@ -103,6 +104,8 @@ export class Battle {
   private readonly loadout: Loadout
   private readonly rng: () => number
   private startedAt = 0
+  private pausedAt: number | null = null
+  private inputLockedUntil = 0
   private promptMissed = false
   private readonly recent = new Set<string>()
   private events: BattleEvent[] = []
@@ -174,9 +177,37 @@ export class Battle {
     this.startedAt = now
   }
 
+  get paused(): boolean {
+    return this.pausedAt !== null
+  }
+
+  /** 一時停止します。止めている間は残り時間が減らず、入力も受け付けません。 */
+  pause(now: number): void {
+    if (this.pausedAt !== null) return
+    this.tick(now)
+    if (this.status !== 'running') return
+    this.pausedAt = now
+  }
+
+  /**
+   * 再開します。止めている間にお題を読んで有利にならないよう、
+   * 再開直後の少しの間は入力を受け付けません。
+   */
+  resume(now: number): void {
+    if (this.pausedAt === null) return
+    this.startedAt += now - this.pausedAt
+    this.pausedAt = null
+    this.inputLockedUntil = now + RESUME_INPUT_LOCK_MS
+  }
+
+  /** 再開直後で、入力を受け付けていない状態か。 */
+  isInputLocked(now: number): boolean {
+    return this.status === 'running' && now < this.inputLockedUntil
+  }
+
   /** 残り時間を更新します。毎フレーム呼び出してください。 */
   tick(now: number): void {
-    if (this.status !== 'running') return
+    if (this.status !== 'running' || this.pausedAt !== null) return
     this.timeLeftMs = Math.max(0, BATTLE_TIME_MS - (now - this.startedAt))
     if (this.timeLeftMs <= 0) {
       this.status = 'timeup'
@@ -188,7 +219,8 @@ export class Battle {
   /** 1 打鍵を処理します。 */
   type(char: string, now: number): void {
     this.tick(now)
-    if (this.status !== 'running') return
+    if (this.status !== 'running' || this.pausedAt !== null) return
+    if (now < this.inputLockedUntil) return
 
     const key = char.toLowerCase()
     const session = this.prompt.session

@@ -13,12 +13,11 @@ import { runeByKey, type SaveData } from '../game/save.ts'
 interface Props {
   save: SaveData
   onChange: (save: SaveData) => void
-  onBack: () => void
 }
 
 const keyLabel = (key: string) => (key === '-' ? 'ー' : key.toUpperCase())
 
-export function ForgeScreen({ save, onChange, onBack }: Props) {
+export function WorkshopScreen({ save, onChange }: Props) {
   const [selected, setSelected] = useState('a')
   const level = save.keyLevels[selected] ?? 0
   const cost = keyUpgradeCost(level)
@@ -31,9 +30,7 @@ export function ForgeScreen({ save, onChange, onBack }: Props) {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.ctrlKey || e.metaKey || e.altKey || e.isComposing) return
       const key = e.key.toLowerCase()
-      if (e.key === 'Escape') {
-        onBack()
-      } else if (FORGE_KEYS.includes(key)) {
+      if (FORGE_KEYS.includes(key)) {
         // キーボードのキーを押すと、そのキーを選びます。
         setSelected(key)
       } else if (e.key === 'Enter' && !(e.target instanceof HTMLButtonElement)) {
@@ -43,24 +40,13 @@ export function ForgeScreen({ save, onChange, onBack }: Props) {
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [save, selected, onChange, onBack])
+  }, [save, selected, onChange])
 
   return (
     <main className="forge">
-      <header className="forge-head">
-        <div>
-          <h1 className="screen-title">鍛冶場</h1>
-          <p className="subtitle">キーを 1 つずつ鍛え、刻印を刻む。あなただけの鍵盤を作りましょう。</p>
-        </div>
-        <div className="head-actions">
-          <span className="shard-count">
-            言霊の欠片 <b>{save.shards.toLocaleString()}</b>
-          </span>
-          <button type="button" className="ghost-button" onClick={onBack}>
-            <kbd>Esc</kbd> 塔へ戻る
-          </button>
-        </div>
-      </header>
+      <p className="shard-count">
+        欠片 <b>{save.shards.toLocaleString()}</b>
+      </p>
 
       <div className="forge-grid">
         <section className="panel keyboard-panel" aria-label="鍵盤">
@@ -140,7 +126,7 @@ export function ForgeScreen({ save, onChange, onBack }: Props) {
           <h2 className="panel-title">刻印</h2>
           {save.runes.length === 0 ? (
             <p className="panel-note">
-              まだ刻印を持っていません。塔の決まった層を初めて突破すると手に入ります（最初は第 2 層）。
+              まだ刻印を持っていません。決まった依頼を初めて達成すると手に入ります（最初は依頼 2）。
             </p>
           ) : (
             <ul className="rune-list">

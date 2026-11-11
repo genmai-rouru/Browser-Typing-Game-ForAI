@@ -3,16 +3,22 @@ import { BATTLE_TIME_MS, GAUGE_PER_BAR } from '../game/balance.ts'
 import { Battle, type Affinity, type BattleEvent } from '../game/battle.ts'
 import { enemyForStage } from '../game/enemies.ts'
 import { GENRES, genreInfo } from '../game/genres.ts'
+import type { BattleSummary } from '../game/rewards.ts'
 import { buildLoadout, masteryLevels, type SaveData } from '../game/save.ts'
 import type { GenreId, PromptKind } from '../game/types.ts'
+import { ResultDialog } from './ResultDialog.tsx'
 
 interface Props {
   stage: number
   save: SaveData
   /** 決着がついたとき（勝利・時間切れ）に呼ばれます。 */
   onFinish: (battle: Battle) => void
-  /** Esc で退却したときに呼ばれます。 */
-  onRetreat: () => void
+  /** 決着後の結果。入っている間は結果ダイアログを重ねて表示します。 */
+  summary: BattleSummary | null
+  /** 退却、または結果ダイアログの「部室へ戻る」。 */
+  onLeave: () => void
+  /** 結果ダイアログの「再出現まで待機」（同じ依頼にもう一度挑む）。 */
+  onRetry: () => void
 }
 
 /** 敵の上に浮かぶダメージ表示。 */
@@ -42,7 +48,7 @@ const AFFINITY_LABEL: Record<Affinity, string> = { weak: '弱点', resist: '耐�
 const reducedMotion = () =>
   typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches
 
-export function BattleScreen({ stage, save, onFinish, onRetreat }: Props) {
+export function FieldScreen({ stage, save, summary, onFinish, onLeave, onRetry }: Props) {
   // 戦闘の状態は Battle クラスが持ちます。React 側は毎フレーム再描画するだけです。
   const [battle] = useState(
     () => new Battle(enemyForStage(stage), stage, buildLoadout(save), save.lastGenre),
@@ -52,16 +58,31 @@ export function BattleScreen({ stage, save, onFinish, onRetreat }: Props) {
   const [pops, setPops] = useState<Pop[]>([])
   const [banner, setBanner] = useState<Banner | null>(null)
   const [imeWarning, setImeWarning] = useState(false)
+  const [retreatOpen, setRetreatOpen] = useState(false)
+  const [inputLocked, setInputLocked] = useState(false)
 
   const enemyRef = useRef<HTMLDivElement>(null)
   const cardRef = useRef<HTMLDivElement>(null)
   const nextId = useRef(0)
   const ended = useRef(false)
   const endTimer = useRef<number | undefined>(undefined)
-  const callbacks = useRef({ onFinish, onRetreat })
+  const callbacks = useRef({ onFinish })
   useEffect(() => {
-    callbacks.current = { onFinish, onRetreat }
+    callbacks.current = { onFinish }
   })
+
+  /** 退却の確認ダイアログを開きます。開いている間は戦闘のタイマーを止めます。 */
+  const openRetreat = useCallback(() => {
+    if (ended.current) return
+    battle.pause(performance.now())
+    setRetreatOpen(true)
+  }, [battle])
+
+  /** 確認ダイアログを閉じて戦闘に戻ります。再開直後は少しの間、入力が無効になります。 */
+  const closeRetreat = useCallback(() => {
+    battle.resume(performance.now())
+    setRetreatOpen(false)
+  }, [battle])
 
   const showBanner = useCallback((text: string, tone: Banner['tone']) => {
     setBanner({ id: nextId.current++, text, tone })
@@ -156,7 +177,9 @@ export function BattleScreen({ stage, save, onFinish, onRetreat }: Props) {
   useEffect(() => {
     let frame = 0
     const loop = () => {
-      battle.tick(performance.now())
+      const now = performance.now()
+      battle.tick(now)
+      setInputLocked(battle.isInputLocked(now))
       handleEvents()
       rerender()
       frame = requestAnimationFrame(loop)
@@ -180,9 +203,12 @@ export function BattleScreen({ stage, save, onFinish, onRetreat }: Props) {
 
       if (e.key === 'Escape') {
         e.preventDefault()
-        if (!ended.current) callbacks.current.onRetreat()
+        if (retreatOpen) closeRetreat()
+        else openRetreat()
         return
       }
+      // 確認ダイアログや結果ダイアログが出ている間は、戦闘の操作を受け付けません。
+      if (retreatOpen || ended.current) return
       if (e.key === 'Tab' || e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
         e.preventDefault()
         const back = e.key === 'ArrowLeft' || (e.key === 'Tab' && e.shiftKey)
@@ -211,7 +237,7 @@ export function BattleScreen({ stage, save, onFinish, onRetreat }: Props) {
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [battle, handleEvents])
+  }, [battle, handleEvents, retreatOpen, openRetreat, closeRetreat])
 
   const switchTo = (genre: GenreId) => {
     battle.switchGenre(genre)
@@ -240,14 +266,14 @@ export function BattleScreen({ stage, save, onFinish, onRetreat }: Props) {
     <main className={`battle mode-${battle.mode} status-${battle.status}`}>
       <header className="battle-head">
         <div className="battle-stage">
-          <span className="stage-no">第{stage}層</span>
+          <span className="stage-no">依頼 {stage}</span>
           {enemy.boss && <span className="boss-tag">BOSS</span>}
         </div>
         <div className={`timer ${seconds <= 5 ? 'is-urgent' : ''}`} aria-label="残り時間">
           <span className="timer-num">{seconds.toFixed(1)}</span>
           <span className="timer-unit">秒</span>
         </div>
-        <button type="button" className="ghost-button" onClick={onRetreat}>
+        <button type="button" className="ghost-button" onClick={openRetreat}>
           <kbd>Esc</kbd> 退却
         </button>
       </header>
@@ -399,6 +425,33 @@ export function BattleScreen({ stage, save, onFinish, onRetreat }: Props) {
           </div>
         </div>
       </footer>
+
+      {inputLocked && !retreatOpen && (
+        <div className="resume-lock" role="status">
+          再開中…
+        </div>
+      )}
+
+      {retreatOpen && (
+        <div className="dialog-backdrop">
+          <div className="dialog small" role="dialog" aria-modal="true" aria-labelledby="retreat-title">
+            <h2 id="retreat-title" className="screen-title">
+              退却しますか？
+            </h2>
+            <p className="dialog-body">退却すると、この戦闘の報酬は手に入りません。</p>
+            <div className="dialog-actions">
+              <button type="button" className="primary-button" autoFocus onClick={closeRetreat}>
+                戦闘に戻る <kbd>Esc</kbd>
+              </button>
+              <button type="button" className="ghost-button" onClick={onLeave}>
+                退却する
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {summary && <ResultDialog summary={summary} shards={save.shards} onRetry={onRetry} onLeave={onLeave} />}
 
       {imeWarning && (
         <div className="ime-warning" role="alert">

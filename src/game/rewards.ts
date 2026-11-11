@@ -67,7 +67,7 @@ export function applyBattle(save: SaveData, battle: Battle): { save: SaveData; s
     if (firstClear) {
       const first = stage * 20
       shards += first
-      breakdown.push({ label: '初突破', value: `+${first}` })
+      breakdown.push({ label: '初達成', value: `+${first}` })
     }
   }
 
@@ -149,7 +149,7 @@ export function applyBattle(save: SaveData, battle: Battle): { save: SaveData; s
   return { save: nextSave, summary }
 }
 
-// ---- 鍛冶場での操作 ----
+// ---- 技術室での操作 ----
 
 /** キーを 1 レベル鍛えます。欠片が足りない・上限のときは元のデータを返します。 */
 export function upgradeKey(save: SaveData, key: string): SaveData {

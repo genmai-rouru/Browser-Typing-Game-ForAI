@@ -8,7 +8,7 @@ export interface SaveData {
   version: 1
   level: number
   exp: number
-  /** キー鍛錬に使う「言霊の欠片」。 */
+  /** キー強化に使う「欠片」。 */
   shards: number
   keyLevels: Record<string, number>
   /** キーごとの累計打鍵数（鍛えるキーを選ぶ目安）。 */
@@ -26,7 +26,7 @@ export interface SaveData {
   battles: number
 }
 
-const STORAGE_KEY = 'kotodama-30s-save-v1'
+const STORAGE_KEY = 'genei-toubatsu-save-v1'
 
 export function createSave(): SaveData {
   return {

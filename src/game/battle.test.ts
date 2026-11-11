@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { BATTLE_TIME_MS, GAUGE_MAX, GAUGE_PER_BAR, expReward, keyUpgradeCost } from './balance.ts'
+import {
+  BATTLE_TIME_MS,
+  GAUGE_MAX,
+  GAUGE_PER_BAR,
+  RESUME_INPUT_LOCK_MS,
+  expReward,
+  keyUpgradeCost,
+} from './balance.ts'
 import { Battle, type BattleEvent, type Loadout } from './battle.ts'
 import { ENEMIES, enemyForStage, phaseIndex } from './enemies.ts'
 import { applyBattle, placeRune, upgradeKey } from './rewards.ts'
@@ -267,6 +274,38 @@ describe('Battle: 時間と決着', () => {
     expect(events).toContainEqual({ type: 'phase', phase: { weak: 'food' } })
     expect(b.affinityOf('school')).toBe('normal')
     expect(b.affinityOf('food')).toBe('weak')
+  })
+})
+
+describe('Battle: 一時停止', () => {
+  it('止めている間は残り時間が減らず、入力も受け付けない', () => {
+    const b = new Battle(dummy(100000), 1, baseLoadout, 'school', noCrit)
+    b.start(0)
+    b.pause(5000)
+    expect(b.paused).toBe(true)
+    b.tick(20000)
+    expect(b.timeLeftMs).toBe(BATTLE_TIME_MS - 5000)
+    b.type(b.prompt.session.guide().rest[0], 20000)
+    expect(b.stats.strokes).toBe(0)
+    b.resume(60000)
+    expect(b.paused).toBe(false)
+    b.tick(61000)
+    expect(b.timeLeftMs).toBe(BATTLE_TIME_MS - 6000)
+  })
+
+  it('再開後 0.5 秒は入力が無効で、ミスにも数えない', () => {
+    const b = new Battle(dummy(100000), 1, baseLoadout, 'school', noCrit)
+    b.start(0)
+    b.pause(1000)
+    b.resume(2000)
+    expect(b.isInputLocked(2000 + RESUME_INPUT_LOCK_MS - 1)).toBe(true)
+    b.type('1', 2000 + RESUME_INPUT_LOCK_MS - 1)
+    b.type(b.prompt.session.guide().rest[0], 2000 + RESUME_INPUT_LOCK_MS - 1)
+    expect(b.stats.strokes).toBe(0)
+    expect(b.stats.misses).toBe(0)
+    expect(b.isInputLocked(2000 + RESUME_INPUT_LOCK_MS)).toBe(false)
+    b.type(b.prompt.session.guide().rest[0], 2000 + RESUME_INPUT_LOCK_MS)
+    expect(b.stats.strokes).toBe(1)
   })
 })
 

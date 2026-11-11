@@ -84,7 +84,7 @@ export const ENEMIES: readonly EnemyDef[] = [
     id: 'chinmoku',
     name: '沈黙の騎士',
     glyph: '黙',
-    flavor: '言葉を封じる鎧をまとう。届くのは強い言霊だけ。',
+    flavor: '言葉を封じる鎧をまとう。届くのは強い言葉だけ。',
     hp: 15000,
     phases: [
       { weak: 'society', resist: 'school' },
