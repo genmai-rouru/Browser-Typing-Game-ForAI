@@ -1,20 +1,19 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react'
-import { BATTLE_TIME_MS, GAUGE_PER_BAR } from '../game/balance.ts'
-import { Battle, type Affinity, type BattleEvent } from '../game/battle.ts'
-import { enemyForStage } from '../game/enemies.ts'
+import { Battle, type BattleEvent, type DefenseResult, type TurnReport } from '../game/battle.ts'
+import { requestById } from '../game/enemies.ts'
 import { GENRES, genreInfo } from '../game/genres.ts'
 import type { BattleSummary } from '../game/rewards.ts'
-import { buildLoadout, masteryLevels, type SaveData } from '../game/save.ts'
-import type { GenreId, PromptKind } from '../game/types.ts'
+import { buildLoadout, type SaveData } from '../game/save.ts'
+import type { EnemyAction, GenreId, PromptKind } from '../game/types.ts'
 import { ResultDialog } from './ResultDialog.tsx'
 
 interface Props {
-  stage: number
+  requestId: number
   save: SaveData
-  /** 決着がついたとき（勝利・時間切れ）に呼ばれます。 */
-  onFinish: (battle: Battle) => void
   /** 決着後の結果。入っている間は結果ダイアログを重ねて表示します。 */
   summary: BattleSummary | null
+  /** 決着がついたとき（勝利・敗北）に呼ばれます。 */
+  onFinish: (battle: Battle) => void
   /** 退却、または結果ダイアログの「部室へ戻る」。 */
   onLeave: () => void
   /** 結果ダイアログの「再出現まで待機」（同じ依頼にもう一度挑む）。 */
@@ -25,7 +24,7 @@ interface Props {
 interface Pop {
   id: number
   text: string
-  tone: 'hit' | 'crit' | 'weak' | 'resist' | 'burst'
+  tone: 'hit' | 'crit' | 'burst' | 'whiff'
   x: number
   y: number
 }
@@ -33,7 +32,7 @@ interface Pop {
 interface Banner {
   id: number
   text: string
-  tone: 'info' | 'big' | 'end'
+  tone: 'info' | 'danger' | 'end'
 }
 
 const KIND_LABEL: Record<PromptKind, string> = {
@@ -43,17 +42,27 @@ const KIND_LABEL: Record<PromptKind, string> = {
   long: '長文',
 }
 
-const AFFINITY_LABEL: Record<Affinity, string> = { weak: '弱点', resist: '耐性', normal: '' }
+const ACTION_LABEL: Record<EnemyAction['type'], string> = {
+  attack: '通常攻撃',
+  strong: '強攻撃',
+  idle: '非攻撃',
+}
 
 const reducedMotion = () =>
   typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches
 
-export function FieldScreen({ stage, save, summary, onFinish, onLeave, onRetry }: Props) {
+/** 防御フェーズの結果を 1 行の文章にします。 */
+function describeDefense(result: DefenseResult): string {
+  const rate = `${Math.round(result.n * 100)}%`
+  if (result.outcome === 'dodged') return '打ち切って回避した'
+  if (result.outcome === 'forced') return `校正力が尽きて ${result.damage} ダメージ（打ち切り率 ${rate}）`
+  if (result.completed) return `打ち切って致命傷を避けた（${result.damage} ダメージ）`
+  return `${result.damage} ダメージを受けた（打ち切り率 ${rate}）`
+}
+
+export function FieldScreen({ requestId, save, summary, onFinish, onLeave, onRetry }: Props) {
   // 戦闘の状態は Battle クラスが持ちます。React 側は毎フレーム再描画するだけです。
-  const [battle] = useState(
-    () => new Battle(enemyForStage(stage), stage, buildLoadout(save), save.lastGenre),
-  )
-  const [mastery] = useState(() => masteryLevels(save))
+  const [battle] = useState(() => new Battle(requestById(requestId), buildLoadout(save), save.lastGenre))
   const [, rerender] = useReducer((n: number) => n + 1, 0)
   const [pops, setPops] = useState<Pop[]>([])
   const [banner, setBanner] = useState<Banner | null>(null)
@@ -63,6 +72,7 @@ export function FieldScreen({ stage, save, summary, onFinish, onLeave, onRetry }
 
   const enemyRef = useRef<HTMLDivElement>(null)
   const cardRef = useRef<HTMLDivElement>(null)
+  const playerRef = useRef<HTMLDivElement>(null)
   const nextId = useRef(0)
   const ended = useRef(false)
   const endTimer = useRef<number | undefined>(undefined)
@@ -71,7 +81,11 @@ export function FieldScreen({ stage, save, summary, onFinish, onLeave, onRetry }
     callbacks.current = { onFinish }
   })
 
-  /** 退却の確認ダイアログを開きます。開いている間は戦闘のタイマーを止めます。 */
+  const showBanner = useCallback((text: string, tone: Banner['tone']) => {
+    setBanner({ id: nextId.current++, text, tone })
+  }, [])
+
+  /** 退却の確認ダイアログを開きます。開いている間は戦闘の時間を止めます。 */
   const openRetreat = useCallback(() => {
     if (ended.current) return
     battle.pause(performance.now())
@@ -83,10 +97,6 @@ export function FieldScreen({ stage, save, summary, onFinish, onLeave, onRetry }
     battle.resume(performance.now())
     setRetreatOpen(false)
   }, [battle])
-
-  const showBanner = useCallback((text: string, tone: Banner['tone']) => {
-    setBanner({ id: nextId.current++, text, tone })
-  }, [])
 
   /** Battle から出来事を受け取り、演出に変換します。 */
   const handleEvents = useCallback(() => {
@@ -103,68 +113,54 @@ export function FieldScreen({ stage, save, summary, onFinish, onLeave, onRetry }
       })
     }
     const animate = !reducedMotion()
+    const shake = (el: HTMLElement | null, size: number, duration: number) => {
+      if (!animate || !el) return
+      el.animate(
+        [
+          { transform: 'translateX(0)' },
+          { transform: `translateX(${-size}px)` },
+          { transform: `translateX(${size}px)` },
+          { transform: 'translateX(0)' },
+        ],
+        { duration },
+      )
+    }
 
     for (const event of events) {
       switch (event.type) {
-        case 'hit': {
-          const tone = event.crit ? 'crit' : event.affinity === 'normal' ? 'hit' : event.affinity
-          pop(String(event.amount), tone)
-          if (animate) {
-            enemyRef.current?.animate(
-              [
-                { transform: 'translate(0, 0) scale(1)' },
-                { transform: `translate(${event.crit ? 7 : 3}px, -2px) scale(0.97)` },
-                { transform: 'translate(0, 0) scale(1)' },
-              ],
-              { duration: 110 },
-            )
-          }
+        case 'hit':
+          pop(String(event.amount), event.crit ? 'crit' : 'hit')
+          shake(enemyRef.current, event.crit ? 7 : 3, 110)
           break
-        }
-        case 'burst': {
-          const label =
-            event.mode === 'ultimate' ? '奥義' : event.mode === 'skill' ? '大技' : event.noMiss ? '完璧' : '追撃'
-          pop(`${label} ${event.amount}`, 'burst', 0.4)
-          if (animate) {
-            enemyRef.current?.animate(
-              [
-                { transform: 'scale(1) rotate(0deg)' },
-                { transform: 'scale(0.86) rotate(-5deg)' },
-                { transform: 'scale(1.04) rotate(2deg)' },
-                { transform: 'scale(1) rotate(0deg)' },
-              ],
-              { duration: 320 },
-            )
-          }
+        case 'whiff':
+          pop('ミス', 'whiff')
           break
-        }
+        case 'burst':
+          pop(`${event.noMiss ? '完璧' : '追撃'} ${event.amount}`, 'burst', 0.4)
+          shake(enemyRef.current, 10, 260)
+          break
         case 'miss':
-          if (animate) {
-            cardRef.current?.animate(
-              [
-                { transform: 'translateX(0)' },
-                { transform: 'translateX(-6px)' },
-                { transform: 'translateX(5px)' },
-                { transform: 'translateX(0)' },
-              ],
-              { duration: 140 },
-            )
-          }
+          shake(cardRef.current, 6, 140)
           cardRef.current?.classList.add('is-miss')
           window.setTimeout(() => cardRef.current?.classList.remove('is-miss'), 160)
           break
-        case 'phase':
-          showBanner(`弱点が「${genreInfo(event.phase.weak).name}」に変わった！`, 'info')
+        case 'mpShort':
+          showBanner('MP が足りません。ジャンルを切り替えてください', 'info')
           break
-        case 'bigMove':
-          showBanner(event.mode === 'ultimate' ? '奥義、解放！' : '大技、発動！', 'big')
+        case 'defenseStart':
+          showBanner(`${event.action.name}！`, 'danger')
           break
-        case 'genre':
+        case 'playerDamage':
+          if (event.amount > 0) shake(playerRef.current, 8, 220)
+          showBanner(event.amount === 0 ? '回避！' : `${event.amount} ダメージ`, event.amount === 0 ? 'info' : 'danger')
+          break
+        case 'waveClear':
+          showBanner(`${event.defeated}を倒した！`, 'info')
           break
         case 'end':
           if (!ended.current) {
             ended.current = true
-            showBanner(event.status === 'timeup' ? '時間切れ' : event.finisher ? 'トドメ！' : '討伐！', 'end')
+            showBanner(event.status === 'won' ? '討伐成功！' : '力尽きた…', 'end')
             endTimer.current = window.setTimeout(() => callbacks.current.onFinish(battle), 1200)
           }
           break
@@ -173,7 +169,7 @@ export function FieldScreen({ stage, save, summary, onFinish, onLeave, onRetry }
     if (added.length > 0) setPops((list) => [...list.slice(-23), ...added])
   }, [battle, showBanner])
 
-  // 毎フレーム、残り時間を進めて再描画します。
+  // 毎フレーム、時間を進めて再描画します。
   useEffect(() => {
     let frame = 0
     const loop = () => {
@@ -209,17 +205,15 @@ export function FieldScreen({ stage, save, summary, onFinish, onLeave, onRetry }
       }
       // 確認ダイアログや結果ダイアログが出ている間は、戦闘の操作を受け付けません。
       if (retreatOpen || ended.current) return
+
       if (e.key === 'Tab' || e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
         e.preventDefault()
         const back = e.key === 'ArrowLeft' || (e.key === 'Tab' && e.shiftKey)
         battle.cycleGenre(back ? -1 : 1)
-      } else if (e.key === 'Enter') {
+      } else if (e.key === 'Enter' || e.key === ' ') {
         e.preventDefault()
-        if (battle.status === 'ready') battle.start(now)
-        else battle.activate(e.shiftKey ? 'ultimate' : 'skill')
-      } else if (e.key === ' ') {
-        e.preventDefault()
-        if (battle.status === 'ready') battle.start(now)
+        if (e.repeat) return
+        battle.proceed(now)
       } else if (/^[1-9]$/.test(e.key)) {
         e.preventDefault()
         const genre = GENRES.find((g) => g.hotkey === e.key)
@@ -241,37 +235,44 @@ export function FieldScreen({ stage, save, summary, onFinish, onLeave, onRetry }
 
   const switchTo = (genre: GenreId) => {
     battle.switchGenre(genre)
-    handleEvents()
+    rerender()
+  }
+
+  const proceed = () => {
+    battle.proceed(performance.now())
     rerender()
   }
 
   // ---- 表示用の値 ----
-  const { enemy, prompt } = battle
-  const session = prompt.session
-  const guide = session.guide()
-  const kanaDone = session.kana.slice(0, session.kanaPosition)
-  const kanaRest = session.kana.slice(session.kanaPosition)
+  const { enemy, prompt, player, phase, report } = battle
+  const defending = phase === 'defense' || phase === 'defenseIntro'
+  const typing = phase === 'attack' || defending
   const seconds = battle.timeLeftMs / 1000
-  const hpRatio = battle.hp / battle.maxHp
-  const phase = battle.phase
-  const promptGenre = genreInfo(prompt.genre)
-  const promptAffinity = battle.affinityOf(prompt.genre)
-  const bars = [0, 1].map((i) =>
-    Math.max(0, Math.min(1, (battle.gauge - i * GAUGE_PER_BAR) / GAUGE_PER_BAR)),
-  )
-  const canSkill = battle.canUse('skill')
-  const canUltimate = battle.canUse('ultimate')
+  const timeRatio = battle.timeLimitMs > 0 ? battle.timeLeftMs / battle.timeLimitMs : 0
+  const forecast = battle.forecast
+  const fatigue = battle.fatigue
+  const canSwitch = (phase === 'attack' || phase === 'command') && !battle.outOfMp
+  const urgent = (phase === 'attack' && seconds <= 5) || phase === 'defense'
 
   return (
-    <main className={`battle mode-${battle.mode} status-${battle.status}`}>
+    <main className={`battle phase-${phase}`}>
       <header className="battle-head">
         <div className="battle-stage">
-          <span className="stage-no">依頼 {stage}</span>
-          {enemy.boss && <span className="boss-tag">BOSS</span>}
+          <span className="stage-no">{battle.request.title}</span>
+          <span className="battle-progress">
+            ウェーブ {battle.waveIndex + 1}/{battle.waveCount}　ターン {Math.max(1, battle.turn)}
+          </span>
         </div>
-        <div className={`timer ${seconds <= 5 ? 'is-urgent' : ''}`} aria-label="残り時間">
-          <span className="timer-num">{seconds.toFixed(1)}</span>
-          <span className="timer-unit">秒</span>
+        <div className={`timer ${urgent ? 'is-urgent' : ''}`} aria-label="残り時間">
+          {typing ? (
+            <>
+              <span className="timer-label">{defending ? 'お題タイマー' : '攻撃'}</span>
+              <span className="timer-num">{phase === 'defenseIntro' ? '--.-' : seconds.toFixed(1)}</span>
+              <span className="timer-unit">秒</span>
+            </>
+          ) : (
+            <span className="timer-label">コマンド</span>
+          )}
         </div>
         <button type="button" className="ghost-button" onClick={openRetreat}>
           <kbd>Esc</kbd> 退却
@@ -279,8 +280,8 @@ export function FieldScreen({ stage, save, summary, onFinish, onLeave, onRetry }
       </header>
       <div className="timer-bar" aria-hidden="true">
         <div
-          className={`timer-bar-fill ${seconds <= 5 ? 'is-urgent' : ''}`}
-          style={{ transform: `scaleX(${battle.timeLeftMs / BATTLE_TIME_MS})` }}
+          className={`timer-bar-fill ${urgent ? 'is-urgent' : ''}`}
+          style={{ transform: `scaleX(${phase === 'defenseIntro' ? 1 : typing ? timeRatio : 0})` }}
         />
       </div>
 
@@ -288,7 +289,7 @@ export function FieldScreen({ stage, save, summary, onFinish, onLeave, onRetry }
         <div className="enemy-stage">
           <div
             ref={enemyRef}
-            className={`enemy-seal ${enemy.boss ? 'is-boss' : ''} ${battle.status === 'won' ? 'is-defeated' : ''}`}
+            className={`enemy-seal ${enemy.boss ? 'is-boss' : ''} ${phase === 'won' ? 'is-defeated' : ''}`}
           >
             <span>{enemy.glyph}</span>
           </div>
@@ -311,118 +312,91 @@ export function FieldScreen({ stage, save, summary, onFinish, onLeave, onRetry }
           )}
         </div>
         <div className="enemy-info">
-          <h1 className="enemy-name">{enemy.name}</h1>
+          <h1 className="enemy-name">
+            {enemy.name}
+            {enemy.boss && <span className="boss-tag">BOSS</span>}
+          </h1>
           <div className="hp">
             <div className="hp-bar">
-              <div className="hp-fill" style={{ transform: `scaleX(${hpRatio})` }} />
-              {enemy.phases.slice(1).map((_, i) => (
-                <span
-                  key={i}
-                  className="hp-tick"
-                  style={{ left: `${(1 - (i + 1) / enemy.phases.length) * 100}%` }}
-                />
-              ))}
+              <div className="hp-fill" style={{ transform: `scaleX(${battle.enemyHp / enemy.hp})` }} />
             </div>
             <div className="hp-num">
-              {battle.hp.toLocaleString()} <span>/ {battle.maxHp.toLocaleString()}</span>
+              {battle.enemyHp.toLocaleString()} <span>/ {enemy.hp.toLocaleString()}</span>
             </div>
           </div>
-          <div className="affinities">
-            <span className={`affinity is-weak genre-${phase.weak}`}>
-              弱点 <b>{genreInfo(phase.weak).name}</b>
-            </span>
-            {phase.resist && (
-              <span className={`affinity is-resist genre-${phase.resist}`}>
-                耐性 <b>{genreInfo(phase.resist).name}</b>
+          <div className="forecast-row">
+            {forecast ? (
+              <span className={`forecast is-${forecast.type}`}>
+                {defending ? '行動' : '予告'} <b>{ACTION_LABEL[forecast.type]}</b>「{forecast.name}」
               </span>
+            ) : (
+              <span className="forecast is-hidden">残り 2 秒で次の行動を予告</span>
             )}
           </div>
         </div>
       </section>
 
+      <section ref={playerRef} className="player-bars" aria-label="リーダーの状態">
+        <Gauge label="HP" tone="hp" value={battle.hp} max={player.maxHp} />
+        <Gauge label="MP" tone="mp" value={battle.mp} max={player.maxMp} />
+        <Gauge label="校正力" tone="prr" value={battle.prr} max={player.prr} />
+        {fatigue > 0 && <span className="fatigue-chip">疲労 {fatigue}</span>}
+      </section>
+
       <nav className="genre-tabs" aria-label="お題のジャンル">
-        {GENRES.map((g) => {
-          const affinity = battle.affinityOf(g.id)
-          return (
-            <button
-              key={g.id}
-              type="button"
-              className={`genre-tab genre-${g.id} ${battle.genre === g.id ? 'is-active' : ''} is-${affinity}`}
-              onClick={() => switchTo(g.id)}
-              disabled={battle.mode !== 'normal'}
-              tabIndex={-1}
-            >
-              <kbd>{g.hotkey}</kbd>
-              <span className="genre-tab-name">{g.name}</span>
-              <span className="genre-tab-lv">熟練 {mastery[g.id]}</span>
-              {affinity !== 'normal' && <span className="genre-tab-mark">{AFFINITY_LABEL[affinity]}</span>}
-            </button>
-          )
-        })}
+        {GENRES.map((g) => (
+          <button
+            key={g.id}
+            type="button"
+            className={`genre-tab genre-${g.id} ${battle.genre === g.id && !battle.outOfMp ? 'is-active' : ''}`}
+            onClick={() => switchTo(g.id)}
+            disabled={!canSwitch || !battle.canUseGenre(g.id)}
+            tabIndex={-1}
+          >
+            <kbd>{g.hotkey}</kbd>
+            <span className="genre-tab-name">{g.name}</span>
+            <span className="genre-tab-lv">MP {battle.mpCost(g.id)}</span>
+          </button>
+        ))}
         <span className="genre-hint">
           <kbd>Tab</kbd> / 数字キーで切替
         </span>
       </nav>
 
-      <section ref={cardRef} className={`prompt-card genre-${prompt.genre}`}>
-        <div className="prompt-meta">
-          <span className="prompt-kind">
-            {prompt.mode === 'ultimate' ? '奥義' : prompt.mode === 'skill' ? '大技' : KIND_LABEL[prompt.kind]}
-          </span>
-          <span className="prompt-genre">{promptGenre.name}</span>
-          {promptAffinity !== 'normal' && (
-            <span className={`prompt-affinity is-${promptAffinity}`}>
-              {promptAffinity === 'weak' ? '弱点を突いている ×1.5' : '耐性で軽減 ×0.6'}
-            </span>
-          )}
-        </div>
-        <p className={`prompt-text kind-${prompt.kind}`}>{prompt.entry.text}</p>
-        <p className="prompt-kana" aria-hidden="true">
-          <span className="done">{kanaDone}</span>
-          <span>{kanaRest}</span>
-        </p>
-        <p className="prompt-romaji" aria-label="ローマ字ガイド">
-          <span className="done">{guide.typed}</span>
-          <span className="cursor">{guide.rest.slice(0, 1)}</span>
-          <span>{guide.rest.slice(1)}</span>
-        </p>
-        {battle.status === 'ready' && (
-          <div className="ready-overlay">
-            <p className="ready-main">
-              <kbd>Space</kbd> で戦闘開始
+      <section
+        ref={cardRef}
+        className={`prompt-card ${prompt && prompt.genre !== 'basic' ? `genre-${prompt.genre}` : ''} ${defending ? 'is-defense' : ''}`}
+      >
+        {prompt ? (
+          <>
+            <div className="prompt-meta">
+              <span className="prompt-kind">
+                {defending ? (battle.defense?.strong ? '防御（強攻撃）' : '防御') : KIND_LABEL[prompt.kind]}
+              </span>
+              <span className="prompt-genre">
+                {prompt.genre === 'basic' ? '通常攻撃（MP 0）' : genreInfo(prompt.genre).name}
+              </span>
+              {defending && (
+                <span className="prompt-note">打ち切り率 {Math.round(battle.defenseProgress * 100)}%</span>
+              )}
+              {battle.blocked && <span className="prompt-note is-warn">MP 不足：ジャンルを切り替えてください</span>}
+            </div>
+            <p className={`prompt-text kind-${prompt.kind}`}>{prompt.entry.text}</p>
+            <p className="prompt-kana" aria-hidden="true">
+              <span className="done">{prompt.session.kana.slice(0, prompt.session.kanaPosition)}</span>
+              <span>{prompt.session.kana.slice(prompt.session.kanaPosition)}</span>
             </p>
-            <p className="ready-sub">30 秒のあいだ、1 打鍵ごとに敵へダメージが入ります。開始前でもジャンルは切り替えられます。</p>
-          </div>
+            <PromptGuide typed={prompt.session.guide().typed} rest={prompt.session.guide().rest} />
+          </>
+        ) : (
+          <CommandPanel report={report} ended={battle.ended} nextEnemy={enemy.name} onProceed={proceed} />
         )}
       </section>
 
       <footer className="battle-foot">
         <div className="next">
           <span className="label">NEXT</span>
-          <span className="next-text">
-            {battle.mode === 'normal' ? battle.next.entry.text : `${battle.next.entry.text}（大技のあと）`}
-          </span>
-        </div>
-        <div className="combo" aria-label="コンボ">
-          <span className="combo-num">{battle.combo}</span>
-          <span className="label">COMBO</span>
-        </div>
-        <div className="gauge">
-          <div className="gauge-bars" aria-label="大技ゲージ">
-            {bars.map((ratio, i) => (
-              <div key={i} className={`gauge-bar ${ratio >= 1 ? 'is-full' : ''}`}>
-                <div className="gauge-fill" style={{ transform: `scaleX(${ratio})` }} />
-              </div>
-            ))}
-          </div>
-          <div className="gauge-keys">
-            <span className={`gauge-key ${canSkill ? 'is-ready' : ''}`}>
-              <kbd>Enter</kbd> 大技（短文）
-            </span>
-            <span className={`gauge-key ${canUltimate ? 'is-ready' : ''}`}>
-              <kbd>Shift</kbd>+<kbd>Enter</kbd> 奥義（長文）
-            </span>
-          </div>
+          <span className="next-text">{battle.outOfMp ? '通常攻撃' : battle.next.entry.text}</span>
         </div>
       </footer>
 
@@ -459,5 +433,83 @@ export function FieldScreen({ stage, save, summary, onFinish, onLeave, onRetry }
         </div>
       )}
     </main>
+  )
+}
+
+function Gauge({ label, tone, value, max }: { label: string; tone: string; value: number; max: number }) {
+  return (
+    <div className={`gauge-row gauge-${tone}`}>
+      <span className="gauge-label">{label}</span>
+      <div className="gauge-track">
+        <div className="gauge-fill" style={{ transform: `scaleX(${max > 0 ? value / max : 0})` }} />
+      </div>
+      <span className="gauge-num">
+        {value}
+        <span> / {max}</span>
+      </span>
+    </div>
+  )
+}
+
+function PromptGuide({ typed, rest }: { typed: string; rest: string }) {
+  return (
+    <p className="prompt-romaji" aria-label="ローマ字ガイド">
+      <span className="done">{typed}</span>
+      <span className="cursor">{rest.slice(0, 1)}</span>
+      <span>{rest.slice(1)}</span>
+    </p>
+  )
+}
+
+/** コマンドフェーズ。直前の経過（簡易リザルト）を表示し、次のターンへ進みます。 */
+function CommandPanel({
+  report,
+  ended,
+  nextEnemy,
+  onProceed,
+}: {
+  report: TurnReport
+  ended: boolean
+  nextEnemy: string
+  onProceed: () => void
+}) {
+  if (ended) return <div className="command" />
+  const title =
+    report.kind === 'start'
+      ? `${nextEnemy}が現れた`
+      : report.kind === 'waveClear'
+        ? `${report.defeated}を倒した。${nextEnemy}が現れた`
+        : `ターン ${report.turn} の経過`
+  return (
+    <div className="command">
+      <h2 className="command-title">{title}</h2>
+      {report.kind !== 'start' && (
+        <dl className="command-stats">
+          <div>
+            <dt>与ダメージ</dt>
+            <dd>{report.damage.toLocaleString()}</dd>
+          </div>
+          <div>
+            <dt>打鍵数</dt>
+            <dd>{report.strokes}</dd>
+          </div>
+          <div>
+            <dt>ミス</dt>
+            <dd>{report.misses}</dd>
+          </div>
+        </dl>
+      )}
+      {report.action && (
+        <p className="command-line">
+          敵の行動：<b>{ACTION_LABEL[report.action.type]}</b>「{report.action.name}」
+          {report.defense ? ` → ${describeDefense(report.defense)}` : ''}
+        </p>
+      )}
+      {report.fatigueDamage > 0 && <p className="command-line">疲労で {report.fatigueDamage} ダメージを受けた</p>}
+      <p className="command-items">アイテム：準備中</p>
+      <button type="button" className="primary-button" onClick={onProceed}>
+        {report.kind === 'start' ? '戦闘開始' : '次のターンへ'} <kbd>Space</kbd>
+      </button>
+    </div>
   )
 }

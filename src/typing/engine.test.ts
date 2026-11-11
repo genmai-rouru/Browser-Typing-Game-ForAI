@@ -212,6 +212,34 @@ describe('ガイド表示', () => {
   })
 })
 
+describe('打ち切り率（最短ローマ字換算）', () => {
+  it('最短の綴りの長さを分母にする', () => {
+    expect(new TypingSession('しんぶん').shortestLength).toBe('sinbunn'.length)
+    expect(new TypingSession('がっこう').shortestLength).toBe('gakkou'.length)
+    expect(new TypingSession('じゃ').shortestLength).toBe(2)
+  })
+
+  it('長い綴りで打っても、進み具合は最短換算で測る', () => {
+    const short = new TypingSession('しか')
+    for (const ch of 'si') short.input(ch)
+    const long = new TypingSession('しか')
+    for (const ch of 'shi') long.input(ch)
+    expect(short.progress()).toBe(0.5)
+    expect(long.progress()).toBe(0.5)
+    // shi の途中（sh）は、最短換算では「あと 1 打鍵で し が終わる」位置。
+    const mid = new TypingSession('しか')
+    for (const ch of 'sh') mid.input(ch)
+    expect(mid.progress()).toBe(0.25)
+  })
+
+  it('打つ前は 0、打ち切ると 1', () => {
+    const s = new TypingSession('さくら')
+    expect(s.progress()).toBe(0)
+    for (const ch of 'sakura') s.input(ch)
+    expect(s.progress()).toBe(1)
+  })
+})
+
 describe('かなの正規化と検証', () => {
   it('カタカナはひらがなとして扱う', () => {
     expect(normalizeKana('ラーメン')).toBe('らーめん')

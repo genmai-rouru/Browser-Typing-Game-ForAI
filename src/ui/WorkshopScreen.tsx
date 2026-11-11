@@ -4,11 +4,10 @@ import {
   FORGE_ROWS,
   KEY_BONUS_PER_LEVEL,
   KEY_MAX_LEVEL,
-  RUNES,
   keyUpgradeCost,
 } from '../game/balance.ts'
-import { placeRune, upgradeKey } from '../game/rewards.ts'
-import { runeByKey, type SaveData } from '../game/save.ts'
+import { upgradeKey } from '../game/rewards.ts'
+import type { SaveData } from '../game/save.ts'
 
 interface Props {
   save: SaveData
@@ -23,7 +22,6 @@ export function WorkshopScreen({ save, onChange }: Props) {
   const cost = keyUpgradeCost(level)
   const maxed = level >= KEY_MAX_LEVEL
   const affordable = save.shards >= cost
-  const runes = runeByKey(save.runes)
   const maxStrokes = Math.max(1, ...FORGE_KEYS.map((k) => save.keyStrokes[k] ?? 0))
 
   useEffect(() => {
@@ -55,7 +53,6 @@ export function WorkshopScreen({ save, onChange }: Props) {
               <div key={row} className={`keyboard-row row-${r}`}>
                 {row.split('').map((key) => {
                   const lv = save.keyLevels[key] ?? 0
-                  const rune = runes[key]
                   const strokes = save.keyStrokes[key] ?? 0
                   return (
                     <button
@@ -69,7 +66,6 @@ export function WorkshopScreen({ save, onChange }: Props) {
                     >
                       <span className="keycap-letter">{keyLabel(key)}</span>
                       <span className="keycap-lv">{lv > 0 ? `Lv${lv}` : '—'}</span>
-                      {rune && <span className={`keycap-rune rune-${rune}`}>{RUNES[rune].glyph}</span>}
                       <span
                         className="keycap-usage"
                         style={{ transform: `scaleX(${strokes / maxStrokes})` }}
@@ -89,7 +85,7 @@ export function WorkshopScreen({ save, onChange }: Props) {
             <p>
               ローマ字の綴りは自由に選べます。たとえば「く」は <code>ku</code>・<code>cu</code>・<code>qu</code>
               、「し」は <code>si</code>・<code>shi</code>・<code>ci</code> のどれでも打てます。
-              鍛えたキーを通る綴りを選べば、同じお題でも与えるダメージが変わります。
+              強化したキーを通る綴りを選べば、同じお題でも与えるダメージが変わります。
             </p>
           </div>
         </section>
@@ -114,47 +110,16 @@ export function WorkshopScreen({ save, onChange }: Props) {
             onClick={() => onChange(upgradeKey(save, selected))}
           >
             {maxed ? (
-              '鍛え上げた'
+              '最大まで強化済み'
             ) : (
               <>
-                鍛える（欠片 {cost}）<kbd>Enter</kbd>
+                強化する（欠片 {cost}）<kbd>Enter</kbd>
               </>
             )}
           </button>
           {!maxed && !affordable && <p className="panel-note">欠片があと {cost - save.shards} 足りません。</p>}
 
-          <h2 className="panel-title">刻印</h2>
-          {save.runes.length === 0 ? (
-            <p className="panel-note">
-              まだ刻印を持っていません。決まった依頼を初めて達成すると手に入ります（最初は依頼 2）。
-            </p>
-          ) : (
-            <ul className="rune-list">
-              {save.runes.map((rune, index) => {
-                const info = RUNES[rune.type]
-                const here = rune.key === selected
-                return (
-                  <li key={index} className={`rune ${here ? 'is-here' : ''}`}>
-                    <span className={`rune-glyph rune-${rune.type}`}>{info.glyph}</span>
-                    <div className="rune-body">
-                      <p className="rune-name">
-                        {info.name}
-                        <span className="rune-where">{rune.key ? `${keyLabel(rune.key)} キーに刻印中` : '未使用'}</span>
-                      </p>
-                      <p className="rune-desc">{info.description}</p>
-                    </div>
-                    <button
-                      type="button"
-                      className="ghost-button small"
-                      onClick={() => onChange(placeRune(save, index, here ? null : selected))}
-                    >
-                      {here ? '外す' : `${keyLabel(selected)} に刻む`}
-                    </button>
-                  </li>
-                )
-              })}
-            </ul>
-          )}
+          <p className="panel-note">キーの付け替えは、購買でキーを買えるようになってから追加します。</p>
         </section>
       </div>
     </main>

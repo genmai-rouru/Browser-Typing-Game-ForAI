@@ -1,4 +1,4 @@
-import { attackForLevel, expToNext } from '../game/balance.ts'
+import { expToNext, playerStats } from '../game/balance.ts'
 import type { SaveData } from '../game/save.ts'
 import type { RoomId } from './navigation.ts'
 
@@ -12,6 +12,7 @@ interface Props {
 
 export function ClubroomScreen({ save, onOpen, onHelp, onReset }: Props) {
   const need = expToNext(save.level)
+  const stats = playerStats(save.level)
   return (
     <main className="room-grid">
       <section className="panel" aria-label="ステータス">
@@ -27,8 +28,36 @@ export function ClubroomScreen({ save, onOpen, onHelp, onReset }: Props) {
         </div>
         <dl className="status-list">
           <div>
+            <dt>HP</dt>
+            <dd>{stats.maxHp}</dd>
+          </div>
+          <div>
+            <dt>MP</dt>
+            <dd>{stats.maxMp}</dd>
+          </div>
+          <div>
             <dt>攻撃力</dt>
-            <dd>{attackForLevel(save.level)}</dd>
+            <dd>{stats.atk}</dd>
+          </div>
+          <div>
+            <dt>防御力</dt>
+            <dd>{stats.def.toFixed(2)}%</dd>
+          </div>
+          <div>
+            <dt>命中率</dt>
+            <dd>{stats.hit}%</dd>
+          </div>
+          <div>
+            <dt>幸運</dt>
+            <dd>{stats.luk}</dd>
+          </div>
+          <div>
+            <dt>校正力</dt>
+            <dd>{stats.prr}</dd>
+          </div>
+          <div>
+            <dt>会心率</dt>
+            <dd>{stats.crt.toFixed(2)}%</dd>
           </div>
           <div>
             <dt>欠片</dt>

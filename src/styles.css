@@ -1932,3 +1932,222 @@ code {
   font-weight: 700;
   transform: translate(-50%, -50%);
 }
+
+/* =========================================================
+   運動場（ウェーブ・ターン制）で追加した部品
+   ========================================================= */
+.battle-stage {
+  display: grid;
+  gap: 0;
+}
+
+.battle-progress {
+  color: var(--ink-soft);
+  font-size: 0.82rem;
+}
+
+.timer-label {
+  margin-right: 8px;
+  color: var(--ink-soft);
+  font-family: var(--font-body);
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
+.forecast-row {
+  min-height: 30px;
+}
+
+.forecast {
+  display: inline-block;
+  padding: 2px 14px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: 0.86rem;
+}
+
+.forecast.is-hidden {
+  border-style: dashed;
+  color: var(--ink-faint);
+}
+
+.forecast.is-attack {
+  border-color: var(--gold);
+  background: color-mix(in srgb, var(--gold) 14%, transparent);
+}
+
+.forecast.is-strong {
+  border-color: var(--seal);
+  background: var(--seal);
+  color: #fff8f0;
+}
+
+.forecast.is-idle {
+  border-color: var(--nature);
+  background: color-mix(in srgb, var(--nature) 12%, transparent);
+}
+
+.player-bars {
+  display: grid;
+  grid-template-columns: 1.4fr 1fr 1fr auto;
+  align-items: center;
+  gap: 18px;
+  padding: 10px 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--paper-raised);
+}
+
+.gauge-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.gauge-label {
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.gauge-track {
+  height: 10px;
+  border: 1px solid var(--ink);
+  border-radius: 3px;
+  background: var(--paper-sunk);
+  overflow: hidden;
+}
+
+.gauge-row .gauge-fill {
+  height: 100%;
+  transform-origin: left;
+  transition: transform 0.15s ease-out;
+}
+
+.gauge-hp .gauge-fill {
+  background: var(--nature);
+}
+
+.gauge-mp .gauge-fill {
+  background: var(--school);
+}
+
+.gauge-prr .gauge-fill {
+  background: var(--gold);
+}
+
+.gauge-num {
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.gauge-num span {
+  color: var(--ink-faint);
+  font-weight: 400;
+}
+
+.fatigue-chip {
+  padding: 1px 10px;
+  border-radius: 999px;
+  background: var(--society);
+  color: var(--paper-raised);
+  font-size: 0.78rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.prompt-card.is-defense {
+  border-color: var(--seal);
+  border-left-color: var(--seal);
+  box-shadow:
+    0 0 0 3px var(--seal-soft),
+    var(--shadow);
+}
+
+.prompt-card.is-defense .prompt-kind {
+  background: var(--seal);
+  color: #fff8f0;
+}
+
+.phase-defenseIntro .prompt-romaji,
+.phase-defenseIntro .prompt-kana {
+  opacity: 0.45;
+}
+
+.prompt-note {
+  color: var(--ink-soft);
+  font-family: var(--font-mono);
+}
+
+.prompt-note.is-warn {
+  color: var(--seal);
+  font-family: var(--font-body);
+  font-weight: 700;
+}
+
+.command {
+  display: grid;
+  gap: 10px;
+  justify-items: start;
+  min-height: 170px;
+}
+
+.command-title {
+  font-family: var(--font-display);
+  font-size: 1.3rem;
+  font-weight: 400;
+  letter-spacing: 0.06em;
+}
+
+.command-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 28px;
+}
+
+.command-stats dt {
+  color: var(--ink-faint);
+  font-size: 0.74rem;
+}
+
+.command-stats dd {
+  font-family: var(--font-mono);
+  font-size: 1.2rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.command-line {
+  font-size: 0.92rem;
+}
+
+.command-items {
+  color: var(--ink-faint);
+  font-size: 0.82rem;
+}
+
+.banner-danger {
+  background: var(--seal);
+  color: #fff8f0;
+}
+
+.pop-whiff {
+  color: var(--ink-faint);
+  font-family: var(--font-body);
+  font-size: 0.85rem;
+}
+
+.battle .battle-foot {
+  grid-template-columns: 1fr;
+}
+
+@media (max-width: 760px) {
+  .player-bars {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+}

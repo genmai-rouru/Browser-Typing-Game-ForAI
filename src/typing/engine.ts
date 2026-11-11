@@ -166,11 +166,49 @@ export class TypingSession {
   private misses = 0
   /** このお題の中で実際に使われた綴り（好みの学習用）。 */
   private readonly used: Record<string, string> = {}
+  /** minFrom[i] = かなの i 文字目以降を、最も短い綴りで打つときの打鍵数。 */
+  private readonly minFrom: number[]
 
   constructor(kanaText: string, prefs: SpellingPrefs = {}) {
     this.kana = normalizeKana(kanaText)
     this.prefs = prefs
     this.current = candidatesAt(this.kana, 0, prefs)
+
+    const length = this.kana.length
+    this.minFrom = Array.from({ length: length + 1 }, () => 0)
+    for (let pos = length - 1; pos >= 0; pos--) {
+      let best = Infinity
+      for (const c of candidatesAt(this.kana, pos)) {
+        best = Math.min(best, c.romaji.length + this.minFrom[pos + c.kanaLength])
+      }
+      this.minFrom[pos] = best
+    }
+  }
+
+  /** お題全体を、最も短い綴りで打つときの打鍵数。 */
+  get shortestLength(): number {
+    return this.minFrom[0]
+  }
+
+  /** いまの状態から、最も短い綴りで打ち切るまでの残り打鍵数。 */
+  shortestRemaining(): number {
+    if (this.finished) return 0
+    let best = Infinity
+    for (const c of this.current) {
+      const rest = c.romaji.length - this.buffer.length + this.minFrom[this.pos + c.kanaLength]
+      best = Math.min(best, rest)
+    }
+    return best
+  }
+
+  /**
+   * 打ち切り率（0〜1）。綴りの選び方で有利不利が出ないよう、
+   * 最も短い綴りに換算した位置で測ります。
+   */
+  progress(): number {
+    const total = this.shortestLength
+    if (total <= 0 || !Number.isFinite(total)) return this.finished ? 1 : 0
+    return Math.max(0, Math.min(1, 1 - this.shortestRemaining() / total))
   }
 
   /** 1 文字（1 打鍵）を入力します。 */

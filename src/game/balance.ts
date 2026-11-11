@@ -1,26 +1,38 @@
-import type { PromptKind, RuneType } from './types.ts'
+import type { Difficulty, GenreId, PlayerStats, PromptKind } from './types.ts'
 
 /**
  * ゲームバランスに関わる数値と計算式をここに集めています。
  * 手触りを調整したいときは、まずこのファイルを見てください。
+ * 「仮」と書いた値は、仕様が決まるまでの置き値です。
  */
 
-/** 1 戦の制限時間（ミリ秒）。 */
-export const BATTLE_TIME_MS = 30_000
+// --- ターンの時間 ---
+/** 攻撃フェーズ 1 回の制限時間（ミリ秒）。 */
+export const ATTACK_TIME_MS = 30_000
+/** 攻撃フェーズの残りがこの時間になったら、敵の次の行動を予告します。 */
+export const FORECAST_MS = 2_000
+/** 防御お題を出してから入力を受け付けるまでの間（ミリ秒）。攻撃フェーズの打鍵の勢いでミスにならないための間です。仮。 */
+export const DEFENSE_INTRO_MS = 800
 /** 一時停止から再開した直後に、入力を受け付けない時間（ミリ秒）。 */
 export const RESUME_INPUT_LOCK_MS = 500
 
-// --- 大技ゲージ ---
-/** ゲージ 1 本ぶんの量。1 本で「大技」、2 本で「奥義」。 */
-export const GAUGE_PER_BAR = 30
-export const GAUGE_MAX = GAUGE_PER_BAR * 2
-/** お題を打ち切ったときのゲージ加算。 */
-export const GAUGE_ON_COMPLETE = 3
+// --- プレイヤーの能力値 ---
+/** 校正力の上限（装備やバフで増えても、これを超えません）。 */
+export const PRR_CAP = 500
 
-// --- プレイヤーの成長 ---
-/** 攻撃力はレベルごとに約 10% ずつ伸びます。10, 11, 12, 13, 15, 16 … */
-export function attackForLevel(level: number): number {
-  return Math.round(10 * Math.pow(1.1, level - 1))
+/** レベルごとの能力値。レベル 1 の値は指定どおり、伸び方は仮。 */
+export function playerStats(level: number): PlayerStats {
+  const up = level - 1
+  return {
+    maxHp: 100 + 10 * up,
+    maxMp: 50 + 3 * up,
+    atk: Math.round(10 * Math.pow(1.1, up)),
+    def: 5,
+    hit: 100,
+    luk: 10,
+    prr: 30,
+    crt: 0.1,
+  }
 }
 
 /** level から次のレベルに上がるのに必要な経験値。 */
@@ -28,8 +40,25 @@ export function expToNext(level: number): number {
   return Math.round(80 * Math.pow(level, 1.5))
 }
 
-// --- キー鍛錬 ---
-/** 鍛えられるキー（画面のキーボードの並び順）。 */
+// --- MP ---
+/** ジャンルごとの、お題 1 つあたりの消費 MP。仮。 */
+export const MP_COST: Readonly<Record<GenreId, number>> = {
+  school: 1,
+  society: 2,
+  nature: 2,
+  food: 1,
+}
+/** ウェーブが変わるときに回復する MP の割合（最大 MP に対して）。仮。 */
+export const MP_RECOVER_PER_WAVE = 0.2
+
+// --- 校正力 ---
+/** ウェーブが変わるときに回復する校正力の割合（最大値に対して）。 */
+export const PRR_RECOVER_PER_WAVE = 0.1
+/** タイポ 1 回で減る校正力。 */
+export const PRR_LOSS_PER_TYPO = 1
+
+// --- キー強化 ---
+/** 強化できるキー（画面のキーボードの並び順）。 */
 export const FORGE_ROWS: readonly string[] = ['qwertyuiop', 'asdfghjkl-', 'zxcvbnm']
 export const FORGE_KEYS: readonly string[] = FORGE_ROWS.join('').split('')
 export const KEY_MAX_LEVEL = 10
@@ -45,40 +74,8 @@ export function keyMultiplier(level: number): number {
   return 1 + KEY_BONUS_PER_LEVEL * level
 }
 
-// --- ジャンル熟練度 ---
-export const MASTERY_MAX_LEVEL = 20
-export const MASTERY_BONUS_PER_LEVEL = 0.03
-
-/** 熟練度レベル level に到達するのに必要な累計打鍵数。80, 240, 480, 800 … */
-export function masteryThreshold(level: number): number {
-  return (80 * level * (level + 1)) / 2
-}
-
-export function masteryLevel(strokes: number): number {
-  let level = 0
-  while (level < MASTERY_MAX_LEVEL && strokes >= masteryThreshold(level + 1)) level++
-  return level
-}
-
-export function masteryMultiplier(level: number): number {
-  return 1 + MASTERY_BONUS_PER_LEVEL * level
-}
-
-// --- 打鍵ダメージ ---
-export const COMBO_CAP = 100
-export const COMBO_BONUS_PER_HIT = 0.005
-
-export function comboMultiplier(combo: number): number {
-  return 1 + Math.min(combo, COMBO_CAP) * COMBO_BONUS_PER_HIT
-}
-
-export const WEAK_MULTIPLIER = 1.5
-export const RESIST_MULTIPLIER = 0.6
-export const CRIT_CHANCE = 0.05
+// --- 攻撃フェーズ ---
 export const CRIT_MULTIPLIER = 2
-
-/** 大技・奥義を打っている間の、1 打鍵あたりの倍率。 */
-export const MODE_STROKE_MULTIPLIER = { normal: 1, skill: 1.5, ultimate: 2 } as const
 
 /** お題を打ち切ったときの追撃倍率（攻撃力 × 打鍵数 × この値）。 */
 export const COMPLETE_FACTOR: Record<PromptKind, number> = {
@@ -87,53 +84,73 @@ export const COMPLETE_FACTOR: Record<PromptKind, number> = {
   short: 0.6,
   long: 0.6,
 }
-export const SKILL_BURST_FACTOR = 2
-export const ULTIMATE_BURST_FACTOR = 3
 /** ミスなしで打ち切ったときの追撃倍率。 */
 export const NO_MISS_MULTIPLIER = 1.5
 
-// --- 刻印 ---
-export interface RuneInfo {
-  name: string
-  glyph: string
-  description: string
+// --- 防御フェーズ ---
+/** 防御お題の長さの範囲（最短の綴りでの打鍵数）。 */
+export const DEFENSE_LENGTH_MIN = 10
+export const DEFENSE_LENGTH_MAX = 30
+/** 強攻撃を打ち切ったときに受ける割合。 */
+export const STRONG_COMPLETE_RATE = 0.25
+/** 強攻撃の制限時間の緩和係数（難易度ごと）。 */
+export const STRONG_TIME_FACTOR: Readonly<Record<Difficulty, number>> = {
+  1: 1.5,
+  2: 1.4,
+  3: 1.25,
+  4: 1.1,
 }
 
-export const RUNE_CRIT_BONUS = 0.3
-export const RUNE_CHARGE_BONUS = 2
-export const RUNE_CHAIN_BONUS = 2
-
-export const RUNES: Readonly<Record<RuneType, RuneInfo>> = {
-  crit: {
-    name: '会心の刻印',
-    glyph: '心',
-    description: 'このキーの打鍵は会心率が +30%（会心はダメージ 2 倍）',
-  },
-  charge: {
-    name: '蓄積の刻印',
-    glyph: '蓄',
-    description: 'このキーの打鍵で大技ゲージがさらに +2 たまる',
-  },
-  chain: {
-    name: '連鎖の刻印',
-    glyph: '連',
-    description: 'このキーの打鍵でコンボがさらに +2 伸びる',
-  },
+/** 防御お題の制限時間（ミリ秒）。文字数 ÷ 敵の KPM × 60 秒。強攻撃は緩和係数を掛けます。 */
+export function defenseTimeMs(length: number, kpm: number, strong: boolean, difficulty: Difficulty): number {
+  const base = (length / kpm) * 60_000
+  return strong ? base * STRONG_TIME_FACTOR[difficulty] : base
 }
 
-/** その階層を初めて突破したときに手に入る刻印。 */
-export const RUNE_REWARDS: Readonly<Record<number, RuneType>> = {
-  2: 'crit',
-  4: 'charge',
-  5: 'chain',
-  7: 'crit',
-  8: 'charge',
-  10: 'chain',
+/** 校正力由来の実効防御力（0〜1）。防御力% ×（校正力 ÷ 最大校正力）。 */
+export function effectiveDefense(defPercent: number, prr: number, maxPrr: number): number {
+  if (maxPrr <= 0) return 0
+  return (defPercent / 100) * (prr / maxPrr)
 }
 
-// --- 報酬 ---
-export const FINISHER_SHARD_MULTIPLIER = 1.5
+/**
+ * 防御フェーズの最終ダメージ。
+ * @param base 元ダメージ D
+ * @param n 打ち切り率（0〜1）
+ * @param d 実効防御力（0〜1）
+ */
+export function defenseDamage(base: number, strong: boolean, completed: boolean, n: number, d: number): number {
+  if (strong) {
+    // 強攻撃は防御力を無視。打ち切れば「致命傷を避けた」として 25% まで下がります。
+    return Math.round(completed ? base * STRONG_COMPLETE_RATE : base * (1 - n / 4))
+  }
+  return completed ? 0 : Math.round(base * (1 - n) * (1 - d))
+}
 
-export function expReward(damage: number, stage: number, won: boolean): number {
-  return Math.floor(damage / 12) + (won ? stage * 30 : 0)
+// --- 疲労 ---
+/** このターンから疲労が付きます。 */
+export const FATIGUE_START_TURN = 11
+/** 疲労 1 段階あたり、毎秒減る HP の割合（最大 HP に対して）。 */
+export const FATIGUE_HP_DRAIN_PER_SEC = 0.01
+/** 疲労 1 段階あたりの攻撃力低下。 */
+export const FATIGUE_ATK_DOWN = 0.1
+/** 疲労でも攻撃力はこの割合までしか下がりません。 */
+export const FATIGUE_ATK_FLOOR = 0.1
+
+/** そのターンの疲労の段階（0 なら疲労なし）。 */
+export function fatigueStacks(turn: number): number {
+  return Math.max(0, turn - FATIGUE_START_TURN + 1)
+}
+
+export function fatigueAttackMultiplier(stacks: number): number {
+  return Math.max(FATIGUE_ATK_FLOOR, 1 - FATIGUE_ATK_DOWN * stacks)
+}
+
+// --- 報酬（お金とアイテムが決まるまでの仮） ---
+export function expReward(damage: number, requestId: number, won: boolean): number {
+  return Math.floor(damage / 12) + (won ? requestId * 30 : 0)
+}
+
+export function shardReward(damage: number, requestId: number, firstClear: boolean): number {
+  return Math.floor(damage / 30) + requestId * 8 + (firstClear ? requestId * 20 : 0)
 }

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { defaultRomaji, findUntypeable, TypingSession } from '../../typing/engine.ts'
 import { GENRE_IDS } from '../genres.ts'
 import type { PromptKind } from '../types.ts'
+import { BASIC_TEXTS } from './basic.ts'
 import { TEXTS } from './index.ts'
 
 const KINDS: PromptKind[] = ['word', 'sentence', 'short', 'long']
@@ -33,6 +34,11 @@ describe('お題データ', () => {
       })
     }
   }
+
+  it('通常攻撃用のお題がすべて打てる', () => {
+    expect(BASIC_TEXTS.length).toBeGreaterThanOrEqual(5)
+    for (const entry of BASIC_TEXTS) expect(findUntypeable(entry.kana), entry.text).toBeNull()
+  })
 
   it('同じ表記のお題が重複していない', () => {
     const seen = new Set<string>()

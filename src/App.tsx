@@ -13,7 +13,7 @@ import { backTarget, type RoomId, type RoomState } from './ui/navigation.ts'
 
 /** 運動場（戦闘）に出ている間の状態。summary が入ると結果ダイアログを表示します。 */
 interface FieldState {
-  stage: number
+  requestId: number
   /** 再挑戦のたびに変えて、戦闘を最初から作り直します。 */
   run: number
   summary: BattleSummary | null
@@ -42,8 +42,8 @@ export default function App() {
 
   const goBack = useCallback(() => setRoom((prev) => ({ id: backTarget(prev), origin: null })), [])
 
-  const startBattle = (stage: number) => {
-    setField((prev) => ({ stage, run: (prev?.run ?? 0) + 1, summary: null }))
+  const startBattle = (requestId: number) => {
+    setField((prev) => ({ requestId, run: (prev?.run ?? 0) + 1, summary: null }))
   }
 
   const finishBattle = (battle: Battle) => {
@@ -69,12 +69,12 @@ export default function App() {
       <div className="app">
         <FieldScreen
           key={field.run}
-          stage={field.stage}
+          requestId={field.requestId}
           save={save}
           summary={field.summary}
           onFinish={finishBattle}
           onLeave={leaveField}
-          onRetry={() => startBattle(field.stage)}
+          onRetry={() => startBattle(field.requestId)}
         />
       </div>
     )
