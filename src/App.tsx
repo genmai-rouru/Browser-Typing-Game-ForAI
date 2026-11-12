@@ -6,6 +6,7 @@ import { BoardScreen } from './ui/BoardScreen.tsx'
 import { ClubroomScreen } from './ui/ClubroomScreen.tsx'
 import { FieldScreen } from './ui/FieldScreen.tsx'
 import { HelpDialog } from './ui/HelpDialog.tsx'
+import { LibraryScreen } from './ui/LibraryScreen.tsx'
 import { PlaceholderScreen } from './ui/PlaceholderScreen.tsx'
 import { Shell } from './ui/Shell.tsx'
 import { WorkshopScreen } from './ui/WorkshopScreen.tsx'
@@ -94,9 +95,7 @@ export default function App() {
         {room.id === 'board' && <BoardScreen save={save} onStart={startBattle} onOpen={openFromHere} />}
         {room.id === 'workshop' && <WorkshopScreen save={save} onChange={updateSave} />}
         {room.id === 'gym' && <PlaceholderScreen planned={['お題練習（報酬なし、記録のみ）']} />}
-        {room.id === 'library' && (
-          <PlaceholderScreen planned={['新しいお題ジャンルの入荷（お金を使う）', '戦闘で使うお題セットの変更']} />
-        )}
+        {room.id === 'library' && <LibraryScreen save={save} onChange={updateSave} />}
         {room.id === 'shop' && <PlaceholderScreen planned={['キーの購入（付け替えと強化は技術室）']} />}
         {room.id === 'desk' && <PlaceholderScreen planned={['パートナーの選択', 'パートナーのステータス']} />}
         {room.id === 'mirror' && (

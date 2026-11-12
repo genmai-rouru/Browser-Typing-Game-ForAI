@@ -15,7 +15,7 @@ export const ENEMIES: readonly EnemyDef[] = [
     name: '誤字スライム',
     glyph: '誤',
     flavor: '打ち間違いから生まれた、ぷるぷるの魔物。',
-    hp: 1600,
+    hp: 800,
     attack: 18,
     kpm: 150,
     patterns: [
@@ -28,7 +28,7 @@ export const ENEMIES: readonly EnemyDef[] = [
     name: '脱字コウモリ',
     glyph: '脱',
     flavor: '文字をくわえて飛び去る。抜けた一文字は戻らない。',
-    hp: 2400,
+    hp: 1200,
     attack: 22,
     kpm: 170,
     patterns: [
@@ -41,7 +41,7 @@ export const ENEMIES: readonly EnemyDef[] = [
     name: '乱筆ゴブリン',
     glyph: '乱',
     flavor: '読めない字を書き散らす、いたずら者。',
-    hp: 3200,
+    hp: 1600,
     attack: 26,
     kpm: 190,
     patterns: [
@@ -53,7 +53,7 @@ export const ENEMIES: readonly EnemyDef[] = [
     name: '棒読みゴーレム',
     glyph: '棒',
     flavor: '抑揚を失った言葉が固まってできた巨体。',
-    hp: 4400,
+    hp: 2200,
     attack: 32,
     kpm: 200,
     patterns: [
@@ -66,7 +66,7 @@ export const ENEMIES: readonly EnemyDef[] = [
     name: '締切の番人',
     glyph: '締',
     flavor: '時が迫るほど強くなる。',
-    hp: 6000,
+    hp: 3000,
     attack: 36,
     kpm: 230,
     boss: true,
@@ -81,7 +81,7 @@ export const ENEMIES: readonly EnemyDef[] = [
     name: '早口の妖精',
     glyph: '速',
     flavor: '聞き取れない速さでまくし立てる。',
-    hp: 7000,
+    hp: 3500,
     attack: 34,
     kpm: 300,
     patterns: [
@@ -94,7 +94,7 @@ export const ENEMIES: readonly EnemyDef[] = [
     name: '冗長オーガ',
     glyph: '冗',
     flavor: '同じ話を何度でも繰り返す、回りくどい大鬼。',
-    hp: 9500,
+    hp: 4750,
     attack: 46,
     kpm: 240,
     patterns: [
@@ -107,7 +107,7 @@ export const ENEMIES: readonly EnemyDef[] = [
     name: '難読ドラゴン',
     glyph: '難',
     flavor: '誰にも読めない名を持つ古い竜。',
-    hp: 12000,
+    hp: 6000,
     attack: 54,
     kpm: 280,
     patterns: [
@@ -120,7 +120,7 @@ export const ENEMIES: readonly EnemyDef[] = [
     name: '沈黙の騎士',
     glyph: '黙',
     flavor: '言葉を封じる鎧をまとう。',
-    hp: 15000,
+    hp: 7500,
     attack: 62,
     kpm: 360,
     patterns: [
@@ -133,7 +133,7 @@ export const ENEMIES: readonly EnemyDef[] = [
     name: '白紙の魔王',
     glyph: '白',
     flavor: 'すべての文章を白紙に戻そうとする王。',
-    hp: 22000,
+    hp: 11000,
     attack: 72,
     kpm: 440,
     boss: true,

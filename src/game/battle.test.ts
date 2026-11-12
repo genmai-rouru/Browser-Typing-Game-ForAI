@@ -16,8 +16,15 @@ import {
 import { Battle, type BattleEvent, type Loadout } from './battle.ts'
 import { ENEMIES, REQUESTS, enemyById, patternIndex } from './enemies.ts'
 import { applyBattle, upgradeKey } from './rewards.ts'
-import { buildLoadout, createSave } from './save.ts'
-import type { EnemyAction, EnemyDef, RequestDef } from './types.ts'
+import {
+  addToGenreSet,
+  buildLoadout,
+  createSave,
+  moveInGenreSet,
+  removeFromGenreSet,
+  sanitizeGenreSet,
+} from './save.ts'
+import type { EnemyAction, EnemyDef, GenreId, RequestDef } from './types.ts'
 
 /** 再現性のある乱数。 */
 function seeded(seed = 1): () => number {
@@ -48,7 +55,13 @@ interface Setup {
 
 function setup({ enemies = [enemy('a', 1e9, [IDLE])], loadout = {}, rng = noCrit, difficulty = 1 }: Setup = {}) {
   const request: RequestDef = { id: 1, title: 'テスト', difficulty, waves: enemies.map((e) => e.id) }
-  const full: Loadout = { stats: playerStats(1), keyLevels: {}, prefs: {}, ...loadout }
+  const full: Loadout = {
+    stats: playerStats(1),
+    keyLevels: {},
+    prefs: {},
+    genres: ['school', 'society', 'nature', 'food'],
+    ...loadout,
+  }
   const battle = new Battle(request, full, 'school', rng, (id) => enemies.find((e) => e.id === id)!)
   battle.tick(0)
   return battle
@@ -344,13 +357,85 @@ describe('MP と校正力', () => {
     b.type(b.prompt!.session.guide().rest[0], 20)
     expect(b.drainEvents()).toContainEqual({ type: 'mpShort' })
     expect(b.prompt!.session.typedCount).toBe(0)
+    // 打てないお題は、切り替えた時点でその場で置き換わる。
     expect(b.switchGenre('school')).toBe(true)
     expect(b.blocked).toBe(false)
+    expect(b.prompt!.genre).toBe('school')
+  })
+})
+
+describe('ジャンルのセットと切替', () => {
+  it('切り替えても入力中のお題は変わらず、次のお題から反映される', () => {
+    const b = setup({ rng: seeded(3) })
+    b.proceed(0)
+    const current = b.prompt!
+    typeGuide(b, 2, 10)
+    expect(b.switchGenre('society')).toBe(true)
+    expect(b.genre).toBe('society')
+    expect(b.prompt).toBe(current)
+    expect(current.session.typedCount).toBe(2)
+    expect(b.next.genre).toBe('society')
+    // 続けて切り替えると、次のお題が上書きされる。
+    expect(b.switchGenre('food')).toBe(true)
+    expect(b.prompt).toBe(current)
+    expect(b.next.genre).toBe('food')
+    const upcoming = b.next.entry
+    while (b.prompt === current) typeGuide(b, 1, 20)
+    expect(b.prompt!.genre).toBe('food')
+    expect(b.prompt!.entry).toBe(upcoming)
+  })
+
+  it('MP は、実際に打ち始めたお題のジャンルぶんだけ消費する', () => {
+    const b = setup({ rng: seeded(3) })
+    b.proceed(0)
+    b.switchGenre('society')
+    typeGuide(b, 1, 10)
+    expect(b.mp).toBe(50 - MP_COST.school)
+  })
+
+  it('コマンドフェーズで切り替えると、次のターンの最初のお題から反映される', () => {
+    const b = setup()
+    b.switchGenre('nature')
+    b.proceed(0)
+    expect(b.prompt!.genre).toBe('nature')
+  })
+
+  it('セットに入っているジャンルだけを、並び順どおりに切り替えられる', () => {
+    const b = setup({ loadout: { genres: ['food', 'school'] } })
+    expect(b.genre).toBe('school')
+    expect(b.switchGenre('nature')).toBe(false)
+    b.cycleGenre(1)
+    expect(b.genre).toBe('food')
+    b.cycleGenre(1)
+    expect(b.genre).toBe('school')
+    b.cycleGenre(-1)
+    expect(b.genre).toBe('food')
+  })
+
+  it('図書室: セットへの追加・取り外し・並べ替え', () => {
+    let save = { ...createSave(), genreSet: ['school'] as GenreId[] }
+    expect(removeFromGenreSet(save, 'school')).toBe(save) // 最後の 1 つは外せない
+    save = addToGenreSet(save, 'food')
+    save = addToGenreSet(save, 'nature')
+    expect(addToGenreSet(save, 'food')).toBe(save) // 同じジャンルは 1 枠まで
+    expect(save.genreSet).toEqual(['school', 'food', 'nature'])
+    save = moveInGenreSet(save, 'nature', -1)
+    expect(save.genreSet).toEqual(['school', 'nature', 'food'])
+    expect(moveInGenreSet(save, 'school', -1)).toBe(save)
+    save = removeFromGenreSet(save, 'school')
+    expect(save.genreSet).toEqual(['nature', 'food'])
+    expect(buildLoadout(save).genres).toEqual(['nature', 'food'])
+  })
+
+  it('保存データのセットが壊れていたら整える', () => {
+    expect(sanitizeGenreSet(undefined)).toEqual(['school', 'society', 'nature', 'food'])
+    expect(sanitizeGenreSet(['food', 'food', 'x', 'school'])).toEqual(['food', 'school'])
+    expect(sanitizeGenreSet([])).toEqual(['school', 'society', 'nature', 'food'])
   })
 })
 
 describe('ウェーブ', () => {
-  it('敵を倒すと即座に次のウェーブへ。HP・MP は引き継ぎ、校正力と MP が少し回復する', () => {
+  it('敵を倒すと即座に次のウェーブへ。HP・MP は引き継ぎ、校正力だけ少し回復する', () => {
     const b = setup({ enemies: [enemy('a', 30, [ATTACK]), enemy('b', 1e9, [IDLE])] })
     b.proceed(0)
     b.type('1', 5)
@@ -363,7 +448,7 @@ describe('ウェーブ', () => {
     expect(b.turn).toBe(0)
     expect(b.report).toMatchObject({ kind: 'waveClear', defeated: 'a', damage: 30 })
     expect(b.hp).toBe(60)
-    expect(b.mp).toBe(50) // 1 消費して 49、20% 回復して上限の 50
+    expect(b.mp).toBe(49) // MP は引き継ぐだけで、回復しない
     expect(b.prr).toBe(30) // 1 減って 29、10% 回復して上限の 30
     b.proceed(5000)
     expect(b.timeLeftMs).toBe(ATTACK_TIME_MS)
@@ -381,7 +466,8 @@ describe('ウェーブ', () => {
 })
 
 describe('疲労', () => {
-  it('11 ターン目から付き、1 ターンごとに重くなる', () => {
+  it('31 ターン目から付き、1 ターンごとに重くなる', () => {
+    expect(FATIGUE_START_TURN).toBe(31)
     expect(fatigueStacks(FATIGUE_START_TURN - 1)).toBe(0)
     expect(fatigueStacks(FATIGUE_START_TURN)).toBe(1)
     expect(fatigueStacks(FATIGUE_START_TURN + 2)).toBe(3)
@@ -390,30 +476,30 @@ describe('疲労', () => {
   it('攻撃フェーズ中に HP が減り続け、攻撃力が下がる。ウェーブが変わると解除される', () => {
     const b = setup({ enemies: [enemy('a', 2000, [IDLE]), enemy('b', 1e9, [IDLE])] })
     let now = 0
-    for (let turn = 1; turn <= 10; turn++) {
+    for (let turn = 1; turn < FATIGUE_START_TURN; turn++) {
       b.proceed(now)
       now += ATTACK_TIME_MS
       b.tick(now)
     }
     expect(b.hp).toBe(100)
     b.proceed(now)
-    expect(b.turn).toBe(11)
+    expect(b.turn).toBe(FATIGUE_START_TURN)
     expect(b.fatigue).toBe(1)
     expect(typeGuide(b, 1, now + 1)[0]).toMatchObject({ type: 'hit', amount: 9 })
-    b.tick(now + 10_000)
-    expect(b.hp).toBe(90) // 毎秒、最大 HP の 1%
+    b.tick(now + 5_000)
+    expect(b.hp).toBe(95) // 毎秒、最大 HP の 1%
     // 倒して次のウェーブへ進むと解除。
-    while (b.waveIndex === 0) typeGuide(b, 1, now + 10_001)
+    while (b.waveIndex === 0) typeGuide(b, 1, now + 5_001)
     b.proceed(now + 20_000)
     expect(b.fatigue).toBe(0)
-    b.tick(now + 30_000)
-    expect(b.hp).toBe(90)
+    b.tick(now + 25_000)
+    expect(b.hp).toBe(95)
   })
 
   it('疲労で HP が尽きると敗北', () => {
     const b = setup()
     let now = 0
-    for (let turn = 1; turn <= 20 && !b.ended; turn++) {
+    for (let turn = 1; turn <= 80 && !b.ended; turn++) {
       b.proceed(now)
       now += ATTACK_TIME_MS
       b.tick(now)
@@ -491,19 +577,15 @@ describe('報酬と記録', () => {
     const save = createSave()
     const b = setup({ enemies: [enemy('a', 1e9, [IDLE])] })
     b.proceed(0)
-    // 最初の 1 打鍵まで 10 秒待ち、残り 20 秒で 1 つのお題の途中まで 20 打鍵する。
-    let typed = 0
-    for (let t = 10_000; typed < 20 && b.phase === 'attack'; t += 1000) {
-      const prompt = b.prompt!
-      if (prompt.session.guide().rest.length > 1) {
-        typeGuide(b, 1, t)
-        typed++
-      } else break
-    }
+    // 最初の 1 打鍵まで 4 秒待ち、残りの時間で 1 つのお題の途中まで 3 打鍵する。
+    const wait = 4000
+    for (let i = 0; i < 3; i++) typeGuide(b, 1, wait + i * 1000)
+    expect(b.prompt!.session.finished).toBe(false)
     b.tick(ATTACK_TIME_MS)
     const { summary } = applyBattle(save, b)
-    expect(summary.kpm).toBe(Math.round((typed / 30_000) * 60_000))
-    expect(summary.rkpm).toBe(Math.round((typed / 20_000) * 60_000))
+    expect(summary.strokes).toBe(3)
+    expect(summary.kpm).toBe(Math.round((3 / ATTACK_TIME_MS) * 60_000))
+    expect(summary.rkpm).toBe(Math.round((3 / (ATTACK_TIME_MS - wait)) * 60_000))
   })
 
   it('キー強化: 欠片を払ってレベルが上がる。足りなければ変化しない', () => {

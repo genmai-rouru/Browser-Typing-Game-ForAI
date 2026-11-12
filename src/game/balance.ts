@@ -7,8 +7,8 @@ import type { Difficulty, GenreId, PlayerStats, PromptKind } from './types.ts'
  */
 
 // --- ターンの時間 ---
-/** 攻撃フェーズ 1 回の制限時間（ミリ秒）。 */
-export const ATTACK_TIME_MS = 30_000
+/** 攻撃フェーズ 1 回の基本の制限時間（ミリ秒）。環境効果で変動させる予定です。 */
+export const ATTACK_TIME_MS = 10_000
 /** 攻撃フェーズの残りがこの時間になったら、敵の次の行動を予告します。 */
 export const FORECAST_MS = 2_000
 /** 防御お題を出してから入力を受け付けるまでの間（ミリ秒）。攻撃フェーズの打鍵の勢いでミスにならないための間です。仮。 */
@@ -48,8 +48,8 @@ export const MP_COST: Readonly<Record<GenreId, number>> = {
   nature: 2,
   food: 1,
 }
-/** ウェーブが変わるときに回復する MP の割合（最大 MP に対して）。仮。 */
-export const MP_RECOVER_PER_WAVE = 0.2
+/** 戦闘に持ち込めるジャンルの最大数。 */
+export const MAX_GENRE_SLOTS = 8
 
 // --- 校正力 ---
 /** ウェーブが変わるときに回復する校正力の割合（最大値に対して）。 */
@@ -129,7 +129,7 @@ export function defenseDamage(base: number, strong: boolean, completed: boolean,
 
 // --- 疲労 ---
 /** このターンから疲労が付きます。 */
-export const FATIGUE_START_TURN = 11
+export const FATIGUE_START_TURN = 31
 /** 疲労 1 段階あたり、毎秒減る HP の割合（最大 HP に対して）。 */
 export const FATIGUE_HP_DRAIN_PER_SEC = 0.01
 /** 疲労 1 段階あたりの攻撃力低下。 */

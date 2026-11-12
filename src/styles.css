@@ -2151,3 +2151,64 @@ code {
     gap: 8px;
   }
 }
+
+/* =========================================================
+   図書室（お題セットの編集）
+   ========================================================= */
+.slot-list {
+  display: grid;
+  gap: 8px;
+}
+
+.slot {
+  display: grid;
+  grid-template-columns: auto auto 1fr auto auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 48px;
+  padding: 6px 12px;
+  border: 1px solid var(--line);
+  border-left: 5px solid var(--genre, var(--line));
+  border-radius: 10px;
+  background: var(--paper);
+}
+
+.slot.is-empty {
+  grid-template-columns: auto 1fr;
+  border-style: dashed;
+  color: var(--ink-faint);
+}
+
+ul.slot-list .slot {
+  grid-template-columns: auto 1fr auto auto;
+}
+
+.slot-glyph {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  background: var(--genre);
+  color: var(--paper-raised);
+  font-family: var(--font-display);
+}
+
+.slot-name {
+  font-weight: 700;
+}
+
+.slot-cost {
+  color: var(--ink-soft);
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+}
+
+.slot-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.next-text .mini-chip {
+  margin-left: 0;
+}

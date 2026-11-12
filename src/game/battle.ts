@@ -9,7 +9,6 @@ import {
   FATIGUE_HP_DRAIN_PER_SEC,
   FORECAST_MS,
   MP_COST,
-  MP_RECOVER_PER_WAVE,
   NO_MISS_MULTIPLIER,
   PRR_LOSS_PER_TYPO,
   PRR_RECOVER_PER_WAVE,
@@ -22,7 +21,6 @@ import {
   keyMultiplier,
 } from './balance.ts'
 import { enemyById, patternIndex } from './enemies.ts'
-import { GENRE_IDS } from './genres.ts'
 import { BASIC_TEXTS } from './texts/basic.ts'
 import { TEXTS } from './texts/index.ts'
 import type {
@@ -55,6 +53,8 @@ export interface Loadout {
   stats: PlayerStats
   keyLevels: Readonly<Record<string, number>>
   prefs: SpellingPrefs
+  /** 戦闘に持ち込むジャンルのセット（並び順どおりに切り替わります）。 */
+  genres: readonly GenreId[]
 }
 
 export interface Prompt {
@@ -68,6 +68,13 @@ export interface Prompt {
   paid: boolean
   /** このお題でミスをしたか。 */
   missed: boolean
+}
+
+/** 次に出すお題。 */
+export interface NextPrompt {
+  entry: TextEntry
+  kind: PromptKind
+  genre: GenreId
 }
 
 /** 防御フェーズで受けている攻撃。 */
@@ -175,13 +182,18 @@ export class Battle {
   mp: number
   /** 校正力。 */
   prr: number
+  /** 選んでいるジャンル。切り替えると「次のお題」から反映されます。 */
   genre: GenreId
+  /** 持ち込んだジャンルのセット。 */
+  readonly genres: readonly GenreId[]
+  /** 攻撃フェーズ 1 回の制限時間（ミリ秒）。 */
+  readonly attackTimeMs: number = ATTACK_TIME_MS
   /** 残り時間と、その場面の制限時間（タイマー表示用）。 */
   timeLeftMs = 0
   timeLimitMs = 0
   /** 入力中のお題（コマンドフェーズでは null）。 */
   prompt: Prompt | null = null
-  next: { entry: TextEntry; kind: PromptKind }
+  next: NextPrompt
   defense: DefenseState | null = null
   report: TurnReport
 
@@ -217,7 +229,8 @@ export class Battle {
     this.player = loadout.stats
     this.rng = rng
     this.findEnemy = findEnemy
-    this.genre = genre
+    this.genres = loadout.genres.length > 0 ? loadout.genres : [genre]
+    this.genre = this.genres.includes(genre) ? genre : this.genres[0]
     this.enemy = findEnemy(request.waves[0])
     this.enemyHp = this.enemy.hp
     this.hp = this.player.maxHp
@@ -275,7 +288,7 @@ export class Battle {
 
   /** どのジャンルも MP が足りず、通常攻撃しか打てない状態か。 */
   get outOfMp(): boolean {
-    return GENRE_IDS.every((g) => !this.canUseGenre(g))
+    return this.genres.every((g) => !this.canUseGenre(g))
   }
 
   /** いまのお題が MP 不足で打てない（ジャンルの切り替えが必要な）状態か。 */
@@ -361,7 +374,7 @@ export class Battle {
     this.turn++
     this.stats.turns++
     this.phase = 'attack'
-    this.timeLeftMs = this.timeLimitMs = ATTACK_TIME_MS
+    this.timeLeftMs = this.timeLimitMs = this.attackTimeMs
     this.lockedAction = null
     this.turnDamage = this.turnStrokes = this.turnMisses = this.turnFatigue = 0
     this.fatigueCarry = 0
@@ -379,25 +392,32 @@ export class Battle {
     else if (this.phase === 'defense') this.typeDefense(key)
   }
 
-  /** お題のジャンルを切り替えます。MP が足りないジャンルには切り替えられません。 */
+  /**
+   * お題のジャンルを切り替えます。MP が足りないジャンルには切り替えられません。
+   * 入力中のお題はそのままで、「次のお題」から新しいジャンルになります。
+   * 何度切り替えても、次のお題が上書きされるだけです。
+   */
   switchGenre(genre: GenreId): boolean {
     if (this.phase !== 'attack' && this.phase !== 'command') return false
-    if (this.pausedFlag || genre === this.genre || !this.canUseGenre(genre)) return false
+    if (this.pausedFlag || genre === this.genre) return false
+    if (!this.genres.includes(genre) || !this.canUseGenre(genre)) return false
+    // 入力中のお題が MP 不足で打てないときだけは、先へ進めるようにその場で置き換えます。
+    const replaceNow = this.blocked
     this.genre = genre
-    if (this.phase === 'attack') {
-      this.collectSpellings()
-      this.setAttackPrompt(this.rollAttack())
-    }
     this.next = this.rollAttack()
+    if (replaceNow) {
+      this.setAttackPrompt(this.next)
+      this.next = this.rollAttack()
+    }
     return true
   }
 
   /** いまのジャンルから dir（+1 / -1）方向で、次に使えるジャンルに切り替えます。 */
   cycleGenre(dir: 1 | -1): boolean {
-    const count = GENRE_IDS.length
-    const index = GENRE_IDS.indexOf(this.genre)
+    const count = this.genres.length
+    const index = this.genres.indexOf(this.genre)
     for (let step = 1; step < count; step++) {
-      const genre = GENRE_IDS[(index + dir * step + count * step) % count]
+      const genre = this.genres[(index + dir * step + count * step) % count]
       if (this.switchGenre(genre)) return true
     }
     return false
@@ -499,7 +519,7 @@ export class Battle {
       this.events.push({ type: 'end', status: 'won' })
       return
     }
-    // 次のウェーブへ。HP と MP は引き継ぎ、疲労は解除、校正力と MP は少し回復します。
+    // 次のウェーブへ。HP と MP は引き継ぎ、疲労は解除、校正力は少し回復します。
     this.report = { ...this.currentReport('waveClear', null, null), defeated }
     this.waveIndex++
     this.enemy = this.findEnemy(this.request.waves[this.waveIndex])
@@ -507,7 +527,6 @@ export class Battle {
     this.turn = 0
     this.patternIdx = this.actionIdx = 0
     this.lockedAction = null
-    this.mp = Math.min(this.player.maxMp, this.mp + Math.round(this.player.maxMp * MP_RECOVER_PER_WAVE))
     this.prr = Math.min(this.player.prr, this.prr + Math.round(this.player.prr * PRR_RECOVER_PER_WAVE))
     this.phase = 'command'
     this.prompt = null
@@ -683,14 +702,14 @@ export class Battle {
     if (this.prompt) Object.assign(this.stats.spellings, this.prompt.session.usedSpellings())
   }
 
-  private setAttackPrompt(item: { entry: TextEntry; kind: PromptKind }): void {
+  private setAttackPrompt(item: NextPrompt): void {
     // どのジャンルも打てないときは、消費 MP 0 の通常攻撃にします。
     const basic = this.outOfMp
     const entry = basic ? this.pick(BASIC_TEXTS) : item.entry
     this.prompt = {
       entry,
       kind: basic ? 'word' : item.kind,
-      genre: basic ? 'basic' : this.genre,
+      genre: basic ? 'basic' : item.genre,
       session: new TypingSession(entry.kana, this.prefs()),
       started: false,
       paid: false,
@@ -698,7 +717,7 @@ export class Battle {
     }
   }
 
-  private rollAttack(): { entry: TextEntry; kind: PromptKind } {
+  private rollAttack(): NextPrompt {
     let roll = this.rng()
     let kind: PromptKind = 'word'
     for (const [k, weight] of ATTACK_KINDS) {
@@ -706,7 +725,7 @@ export class Battle {
       if (roll < weight) break
       roll -= weight
     }
-    return { entry: this.pick(TEXTS[this.genre][kind]), kind }
+    return { entry: this.pick(TEXTS[this.genre][kind]), kind, genre: this.genre }
   }
 
   /** 最近出したお題を避けて 1 件選びます。 */

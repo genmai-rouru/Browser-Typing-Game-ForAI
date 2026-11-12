@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react'
 import { Battle, type BattleEvent, type DefenseResult, type TurnReport } from '../game/battle.ts'
 import { requestById } from '../game/enemies.ts'
-import { GENRES, genreInfo } from '../game/genres.ts'
+import { genreInfo } from '../game/genres.ts'
 import type { BattleSummary } from '../game/rewards.ts'
 import { buildLoadout, type SaveData } from '../game/save.ts'
 import type { EnemyAction, GenreId, PromptKind } from '../game/types.ts'
@@ -216,8 +216,9 @@ export function FieldScreen({ requestId, save, summary, onFinish, onLeave, onRet
         battle.proceed(now)
       } else if (/^[1-9]$/.test(e.key)) {
         e.preventDefault()
-        const genre = GENRES.find((g) => g.hotkey === e.key)
-        if (genre) battle.switchGenre(genre.id)
+        // 数字キーは、セットの並び順（1 枠目から）に対応します。
+        const genre = battle.genres[Number(e.key) - 1]
+        if (genre) battle.switchGenre(genre)
       } else if (e.key.length === 1) {
         e.preventDefault()
         if (e.repeat) return
@@ -344,7 +345,7 @@ export function FieldScreen({ requestId, save, summary, onFinish, onLeave, onRet
       </section>
 
       <nav className="genre-tabs" aria-label="お題のジャンル">
-        {GENRES.map((g) => (
+        {battle.genres.map((id, index) => ({ ...genreInfo(id), slot: index + 1 })).map((g) => (
           <button
             key={g.id}
             type="button"
@@ -353,13 +354,13 @@ export function FieldScreen({ requestId, save, summary, onFinish, onLeave, onRet
             disabled={!canSwitch || !battle.canUseGenre(g.id)}
             tabIndex={-1}
           >
-            <kbd>{g.hotkey}</kbd>
+            <kbd>{g.slot}</kbd>
             <span className="genre-tab-name">{g.name}</span>
             <span className="genre-tab-lv">MP {battle.mpCost(g.id)}</span>
           </button>
         ))}
         <span className="genre-hint">
-          <kbd>Tab</kbd> / 数字キーで切替
+          <kbd>Tab</kbd> / 数字キーで切替（次のお題から）
         </span>
       </nav>
 
@@ -396,7 +397,16 @@ export function FieldScreen({ requestId, save, summary, onFinish, onLeave, onRet
       <footer className="battle-foot">
         <div className="next">
           <span className="label">NEXT</span>
-          <span className="next-text">{battle.outOfMp ? '通常攻撃' : battle.next.entry.text}</span>
+          <span className="next-text">
+            {battle.outOfMp ? (
+              '通常攻撃'
+            ) : (
+              <>
+                <span className={`mini-chip genre-${battle.next.genre}`}>{genreInfo(battle.next.genre).name}</span>{' '}
+                {battle.next.entry.text}
+              </>
+            )}
+          </span>
         </div>
       </footer>
 
