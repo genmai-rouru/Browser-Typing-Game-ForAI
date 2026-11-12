@@ -2212,3 +2212,32 @@ ul.slot-list .slot {
 .next-text .mini-chip {
   margin-left: 0;
 }
+
+/* ---- ジャンルの 10 枠表示（5 列 × 2 段） ---- */
+.genre-tabs {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.genre-tab {
+  min-height: 46px;
+}
+
+.genre-tab.is-empty {
+  border-style: dashed;
+  border-bottom-width: 1px;
+  background: transparent;
+  color: var(--ink-faint);
+  cursor: default;
+}
+
+.genre-tabs .genre-hint {
+  grid-column: 1 / -1;
+  justify-self: end;
+}
+
+@media (max-width: 760px) {
+  .genre-tabs {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}

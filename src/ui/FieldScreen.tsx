@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react'
+import { MAX_GENRE_SLOTS, slotIndexOfKey, slotKey } from '../game/balance.ts'
 import { Battle, type BattleEvent, type DefenseResult, type TurnReport } from '../game/battle.ts'
 import { requestById } from '../game/enemies.ts'
 import { genreInfo } from '../game/genres.ts'
@@ -214,10 +215,10 @@ export function FieldScreen({ requestId, save, summary, onFinish, onLeave, onRet
         e.preventDefault()
         if (e.repeat) return
         battle.proceed(now)
-      } else if (/^[1-9]$/.test(e.key)) {
+      } else if (slotIndexOfKey(e.key) >= 0) {
         e.preventDefault()
-        // 数字キーは、セットの並び順（1 枠目から）に対応します。
-        const genre = battle.genres[Number(e.key) - 1]
+        // 数字キーは、セットの並び順（1〜9 が 1〜9 枠目、0 が 10 枠目）に対応します。
+        const genre = battle.genres[slotIndexOfKey(e.key)]
         if (genre) battle.switchGenre(genre)
       } else if (e.key.length === 1) {
         e.preventDefault()
@@ -345,22 +346,34 @@ export function FieldScreen({ requestId, save, summary, onFinish, onLeave, onRet
       </section>
 
       <nav className="genre-tabs" aria-label="お題のジャンル">
-        {battle.genres.map((id, index) => ({ ...genreInfo(id), slot: index + 1 })).map((g) => (
-          <button
-            key={g.id}
-            type="button"
-            className={`genre-tab genre-${g.id} ${battle.genre === g.id && !battle.outOfMp ? 'is-active' : ''}`}
-            onClick={() => switchTo(g.id)}
-            disabled={!canSwitch || !battle.canUseGenre(g.id)}
-            tabIndex={-1}
-          >
-            <kbd>{g.slot}</kbd>
-            <span className="genre-tab-name">{g.name}</span>
-            <span className="genre-tab-lv">MP {battle.mpCost(g.id)}</span>
-          </button>
-        ))}
+        {Array.from({ length: MAX_GENRE_SLOTS }, (_, index) => {
+          const id = battle.genres[index]
+          if (!id) {
+            return (
+              <span key={`empty-${index}`} className="genre-tab is-empty">
+                <kbd>{slotKey(index)}</kbd>
+                <span className="genre-tab-name">空き</span>
+              </span>
+            )
+          }
+          const g = genreInfo(id)
+          return (
+            <button
+              key={id}
+              type="button"
+              className={`genre-tab genre-${id} ${battle.genre === id && !battle.outOfMp ? 'is-active' : ''}`}
+              onClick={() => switchTo(id)}
+              disabled={!canSwitch || !battle.canUseGenre(id)}
+              tabIndex={-1}
+            >
+              <kbd>{slotKey(index)}</kbd>
+              <span className="genre-tab-name">{g.name}</span>
+              <span className="genre-tab-lv">MP {battle.mpCost(id)}</span>
+            </button>
+          )
+        })}
         <span className="genre-hint">
-          <kbd>Tab</kbd> / 数字キーで切替（次のお題から）
+          <kbd>Tab</kbd> / 数字キー 1〜0 で切替（次のお題から）
         </span>
       </nav>
 

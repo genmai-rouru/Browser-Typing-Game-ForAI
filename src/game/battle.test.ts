@@ -3,6 +3,7 @@ import {
   ATTACK_TIME_MS,
   DEFENSE_INTRO_MS,
   FATIGUE_START_TURN,
+  MAX_GENRE_SLOTS,
   MP_COST,
   RESUME_INPUT_LOCK_MS,
   defenseDamage,
@@ -12,6 +13,8 @@ import {
   fatigueStacks,
   keyUpgradeCost,
   playerStats,
+  slotIndexOfKey,
+  slotKey,
 } from './balance.ts'
 import { Battle, type BattleEvent, type Loadout } from './battle.ts'
 import { ENEMIES, REQUESTS, enemyById, patternIndex } from './enemies.ts'
@@ -425,6 +428,12 @@ describe('ジャンルのセットと切替', () => {
     save = removeFromGenreSet(save, 'school')
     expect(save.genreSet).toEqual(['nature', 'food'])
     expect(buildLoadout(save).genres).toEqual(['nature', 'food'])
+  })
+
+  it('枠は 10 個で、数字キー 1〜9・0 に対応する', () => {
+    expect(MAX_GENRE_SLOTS).toBe(10)
+    expect([0, 8, 9].map(slotKey)).toEqual(['1', '9', '0'])
+    expect(['1', '9', '0', 'a'].map(slotIndexOfKey)).toEqual([0, 8, 9, -1])
   })
 
   it('保存データのセットが壊れていたら整える', () => {

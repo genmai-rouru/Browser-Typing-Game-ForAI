@@ -1,4 +1,4 @@
-import { MAX_GENRE_SLOTS, MP_COST } from '../game/balance.ts'
+import { MAX_GENRE_SLOTS, MP_COST, slotKey } from '../game/balance.ts'
 import { genreInfo } from '../game/genres.ts'
 import {
   addToGenreSet,
@@ -30,7 +30,7 @@ export function LibraryScreen({ save, onChange }: Props) {
           {slots.map((genre, index) =>
             genre ? (
               <li key={genre} className={`slot genre-${genre}`}>
-                <kbd>{index + 1}</kbd>
+                <kbd>{slotKey(index)}</kbd>
                 <span className="slot-glyph">{genreInfo(genre).glyph}</span>
                 <span className="slot-name">{genreInfo(genre).name}</span>
                 <span className="slot-cost">MP {MP_COST[genre]}</span>
@@ -65,14 +65,14 @@ export function LibraryScreen({ save, onChange }: Props) {
               </li>
             ) : (
               <li key={`empty-${index}`} className="slot is-empty">
-                <kbd>{index + 1}</kbd>
+                <kbd>{slotKey(index)}</kbd>
                 <span className="slot-name">空き</span>
               </li>
             ),
           )}
         </ol>
         <p className="panel-note">
-          番号は、戦闘中に数字キーで切り替えるときの番号です。Tab キーではこの順に切り替わります。最低 1 つは必要です。
+          番号は、戦闘中に切り替えるときの数字キーです（10 枠目は 0 キー）。Tab キーではこの順に切り替わります。最低 1 つは必要です。
         </p>
       </section>
 
