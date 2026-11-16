@@ -4,6 +4,7 @@ import { applyBattle, type BattleSummary } from './game/rewards.ts'
 import { clearSave, createSave, loadSave, storeSave, type SaveData } from './game/save.ts'
 import { BoardScreen } from './ui/BoardScreen.tsx'
 import { ClubroomScreen } from './ui/ClubroomScreen.tsx'
+import { DeskScreen } from './ui/DeskScreen.tsx'
 import { FieldScreen } from './ui/FieldScreen.tsx'
 import { HelpDialog } from './ui/HelpDialog.tsx'
 import { LibraryScreen } from './ui/LibraryScreen.tsx'
@@ -97,7 +98,7 @@ export default function App() {
         {room.id === 'gym' && <PlaceholderScreen planned={['お題練習（報酬なし、記録のみ）']} />}
         {room.id === 'library' && <LibraryScreen save={save} onChange={updateSave} />}
         {room.id === 'shop' && <PlaceholderScreen planned={['キーの購入（付け替えと強化は技術室）']} />}
-        {room.id === 'desk' && <PlaceholderScreen planned={['パートナーの選択', 'パートナーのステータス']} />}
+        {room.id === 'desk' && <DeskScreen save={save} onChange={updateSave} />}
         {room.id === 'mirror' && (
           <PlaceholderScreen
             planned={[

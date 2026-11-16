@@ -63,6 +63,7 @@ function setup({ enemies = [enemy('a', 1e9, [IDLE])], loadout = {}, rng = noCrit
     keyLevels: {},
     prefs: {},
     genres: ['school', 'society', 'nature', 'food'],
+    party: [],
     ...loadout,
   }
   const battle = new Battle(request, full, 'school', rng, (id) => enemies.find((e) => e.id === id)!)

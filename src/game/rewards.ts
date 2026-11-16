@@ -1,5 +1,6 @@
 import { KEY_MAX_LEVEL, expReward, expToNext, keyUpgradeCost, shardReward } from './balance.ts'
 import type { Battle } from './battle.ts'
+import { growPartner, partnerById, type SkillLevelUp } from './partners.ts'
 import type { SaveData } from './save.ts'
 
 /** 依頼 1 件の結果。結果ダイアログの表示に使います。 */
@@ -25,6 +26,8 @@ export interface BattleSummary {
   shards: number
   levelBefore: number
   levelAfter: number
+  /** 同行したパートナーの成長。 */
+  partners: Array<{ id: string; name: string; exp: number; levelUps: SkillLevelUp[] }>
 }
 
 function perMinute(strokes: number, ms: number): number {
@@ -53,6 +56,19 @@ export function applyBattle(save: SaveData, battle: Battle): { save: SaveData; s
     keyStrokes[key] = (keyStrokes[key] ?? 0) + count
   }
 
+  // 同行したパートナーには、プレイヤーと同じ量の経験値が入ります（仮）。
+  const partners = { ...save.partners }
+  const partnerResults: BattleSummary['partners'] = []
+  const record = { won, requestId: request.id, defeated: stats.defeated }
+  for (const member of battle.party) {
+    const progress = partners[member.def.id]
+    const def = partnerById(member.def.id)
+    if (!progress || !def) continue
+    const grown = growPartner(def, progress, exp, record)
+    partners[def.id] = grown.progress
+    partnerResults.push({ id: def.id, name: def.name, exp, levelUps: grown.levelUps })
+  }
+
   const nextSave: SaveData = {
     ...save,
     level,
@@ -62,6 +78,7 @@ export function applyBattle(save: SaveData, battle: Battle): { save: SaveData; s
     clearedRequest: firstClear ? request.id : save.clearedRequest,
     prefs: { ...save.prefs, ...stats.spellings },
     lastGenre: battle.genre,
+    partners,
     battles: save.battles + 1,
   }
 
@@ -83,6 +100,7 @@ export function applyBattle(save: SaveData, battle: Battle): { save: SaveData; s
     shards,
     levelBefore: save.level,
     levelAfter: level,
+    partners: partnerResults,
   }
   return { save: nextSave, summary }
 }

@@ -1,5 +1,7 @@
 import { expToNext, playerStats } from '../game/balance.ts'
+import { ROLE_NAMES, partnerById } from '../game/partners.ts'
 import type { SaveData } from '../game/save.ts'
+import { PartnerPortrait } from './PartnerPortrait.tsx'
 import type { RoomId } from './navigation.ts'
 
 interface Props {
@@ -71,7 +73,22 @@ export function ClubroomScreen({ save, onOpen, onHelp, onReset }: Props) {
 
       <section className="panel" aria-label="パートナー">
         <h2 className="panel-title">パートナー</h2>
-        <p className="placeholder-note">準備中（パートナーキャラをここに表示します）</p>
+        <div className="party-slots">
+          {(['front', 'back'] as const).map((role) => {
+            const id = save.party[role]
+            const def = id ? partnerById(id) : undefined
+            return (
+              <div key={role} className="party-slot">
+                <span className="party-role">{ROLE_NAMES[role]}</span>
+                <PartnerPortrait partner={def ?? null} size="large" />
+                <span className="party-name">{def ? def.name : '空き'}</span>
+              </div>
+            )
+          })}
+        </div>
+        <button type="button" className="ghost-button" onClick={() => onOpen('desk')}>
+          部室机で編成する
+        </button>
       </section>
 
       <section className="panel room-links" aria-label="部室の中">

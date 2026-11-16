@@ -1,6 +1,13 @@
 import { MAX_GENRE_SLOTS, playerStats } from './balance.ts'
 import type { Loadout } from './battle.ts'
 import { GENRE_IDS } from './genres.ts'
+import {
+  INITIAL_PARTNER,
+  createProgress,
+  partnerById,
+  type PartnerProgress,
+  type PartnerRole,
+} from './partners.ts'
 import type { GenreId } from './types.ts'
 
 /** ブラウザに保存するプレイデータ。 */
@@ -20,6 +27,10 @@ export interface SaveData {
   lastGenre: GenreId
   /** 戦闘に持ち込むジャンルのセット（図書室で編集します）。 */
   genreSet: GenreId[]
+  /** 所持しているパートナーと、その成長の記録。 */
+  partners: Record<string, PartnerProgress>
+  /** 戦闘に同行するパートナー（前衛支援・後方支援）。 */
+  party: Record<PartnerRole, string | null>
   battles: number
 }
 
@@ -37,6 +48,8 @@ export function createSave(): SaveData {
     prefs: {},
     lastGenre: 'school',
     genreSet: [...GENRE_IDS],
+    partners: { [INITIAL_PARTNER]: createProgress() },
+    party: { front: INITIAL_PARTNER, back: null },
     battles: 0,
   }
 }
@@ -57,6 +70,7 @@ export function loadSave(): SaveData {
       ...data,
       lastGenre: GENRE_IDS.includes(data.lastGenre as GenreId) ? data.lastGenre! : fresh.lastGenre,
       genreSet: sanitizeGenreSet(data.genreSet),
+      ...sanitizePartners(data.partners, data.party),
     }
   } catch {
     return fresh
@@ -77,6 +91,38 @@ export function sanitizeGenreSet(value: unknown): GenreId[] {
     }
   }
   return result.length > 0 ? result.slice(0, MAX_GENRE_SLOTS) : [...GENRE_IDS]
+}
+
+/** パートナーの記録を正しい形に整えます。古いデータには初期パートナーを加えます。 */
+function sanitizePartners(
+  partners: unknown,
+  party: unknown,
+): Pick<SaveData, 'partners' | 'party'> {
+  const result: Record<string, PartnerProgress> = {}
+  if (partners && typeof partners === 'object') {
+    for (const [id, value] of Object.entries(partners as Record<string, Partial<PartnerProgress>>)) {
+      if (!partnerById(id) || !value || typeof value !== 'object') continue
+      result[id] = { ...createProgress(), ...value }
+    }
+  }
+  if (Object.keys(result).length === 0) {
+    return { partners: { [INITIAL_PARTNER]: createProgress() }, party: { front: INITIAL_PARTNER, back: null } }
+  }
+  const slots = (party ?? {}) as Partial<Record<PartnerRole, string | null>>
+  const valid = (role: PartnerRole) => {
+    const id = slots[role]
+    return id && result[id] && partnerById(id)?.role === role ? id : null
+  }
+  return { partners: result, party: { front: valid('front'), back: valid('back') } }
+}
+
+// ---- 部室机での操作（パートナーの編成） ----
+
+/** パートナーを同行させます（役割に合った枠に入ります）。id が null なら、その枠を空けます。 */
+export function setPartyMember(save: SaveData, role: PartnerRole, id: string | null): SaveData {
+  if (id !== null && (!save.partners[id] || partnerById(id)?.role !== role)) return save
+  if (save.party[role] === id) return save
+  return { ...save, party: { ...save.party, [role]: id } }
 }
 
 // ---- 図書室での操作（ジャンルのセットの編集） ----
@@ -127,5 +173,11 @@ export function buildLoadout(save: SaveData): Loadout {
     keyLevels: save.keyLevels,
     prefs: save.prefs,
     genres: save.genreSet,
+    party: (['front', 'back'] as const).flatMap((role) => {
+      const id = save.party[role]
+      const def = id ? partnerById(id) : undefined
+      const progress = id ? save.partners[id] : undefined
+      return def && progress ? [{ def, passiveLv: progress.passiveLv, uniqueLv: progress.uniqueLv }] : []
+    }),
   }
 }

@@ -21,6 +21,7 @@ import {
   keyMultiplier,
 } from './balance.ts'
 import { enemyById, patternIndex } from './enemies.ts'
+import { passiveHealRate, uniqueStrokes, type PartnerDef, type PartnerRole } from './partners.ts'
 import { BASIC_TEXTS } from './texts/basic.ts'
 import { TEXTS } from './texts/index.ts'
 import type {
@@ -55,6 +56,17 @@ export interface Loadout {
   prefs: SpellingPrefs
   /** 戦闘に持ち込むジャンルのセット（並び順どおりに切り替わります）。 */
   genres: readonly GenreId[]
+  /** 同行するパートナーと、そのスキルレベル。 */
+  party: ReadonlyArray<{ def: PartnerDef; passiveLv: number; uniqueLv: number }>
+}
+
+/** 戦闘中のパートナーの状態。 */
+export interface PartyMember {
+  def: PartnerDef
+  passiveLv: number
+  uniqueLv: number
+  /** 固有スキルが使えるようになるまでの残りターン数（0 なら使える）。 */
+  cooldown: number
 }
 
 export interface Prompt {
@@ -111,6 +123,8 @@ export interface TurnReport {
   action: EnemyAction | null
   defense: DefenseResult | null
   fatigueDamage: number
+  /** このコマンドフェーズの開始時に、パートナーのパッシブで回復した HP。 */
+  heal: number
   /** waveClear のとき、倒した敵の名前。 */
   defeated?: string
 }
@@ -125,6 +139,7 @@ export type BattleEvent =
   | { type: 'defenseStart'; action: EnemyAction }
   | { type: 'playerDamage'; amount: number; result: DefenseResult }
   | { type: 'waveClear'; defeated: string }
+  | { type: 'partnerSkill'; partner: string; skill: string; amount: number }
   | { type: 'end'; status: 'won' | 'lost' }
 
 export interface BattleStats {
@@ -140,6 +155,8 @@ export interface BattleStats {
   /** そのうち、各お題が表示されてから最初の 1 打鍵までの時間（初速）の合計。 */
   latencyMs: number
   keyStrokes: Record<string, number>
+  /** 倒した敵の id（倒した順）。 */
+  defeated: string[]
   /** 実際に使われた綴り（ガイドの好み学習用）。 */
   spellings: Record<string, string>
 }
@@ -170,6 +187,8 @@ export class Battle {
   readonly request: RequestDef
   readonly stats: BattleStats
   readonly player: PlayerStats
+  /** 同行しているパートナー。 */
+  readonly party: PartyMember[]
 
   phase: Phase = 'command'
   /** いまのウェーブ（0 始まり）。 */
@@ -246,8 +265,11 @@ export class Battle {
       activeMs: 0,
       latencyMs: 0,
       keyStrokes: {},
+      defeated: [],
       spellings: {},
     }
+    // 固有スキルは、戦闘開始の時点からクールダウンが始まっています。
+    this.party = loadout.party.map((m) => ({ ...m, cooldown: m.def.unique.cooldown }))
     this.next = this.rollAttack()
     this.report = this.emptyReport('start')
   }
@@ -383,6 +405,32 @@ export class Battle {
     return true
   }
 
+  partyMember(role: PartnerRole): PartyMember | undefined {
+    return this.party.find((m) => m.def.role === role)
+  }
+
+  canUseSkill(role: PartnerRole): boolean {
+    const member = this.partyMember(role)
+    return this.phase === 'command' && !this.pausedFlag && !!member && member.cooldown <= 0
+  }
+
+  /**
+   * パートナーの固有スキルを使います（コマンドフェーズでのみ）。
+   * 使ってもコマンドフェーズは続きます。敵を倒した場合は、次のウェーブか勝利になります。
+   */
+  useSkill(role: PartnerRole, now: number): boolean {
+    this.tick(now)
+    const member = this.partyMember(role)
+    if (!member || !this.canUseSkill(role)) return false
+    member.cooldown = member.def.unique.cooldown
+    const amount = Math.round(this.player.atk * uniqueStrokes(member.def, member.uniqueLv))
+    // スキルで倒したときの経過表示が、前のターンの数値と混ざらないようにします。
+    this.turnDamage = this.turnStrokes = this.turnMisses = this.turnFatigue = 0
+    this.events.push({ type: 'partnerSkill', partner: member.def.name, skill: member.def.unique.name, amount })
+    this.dealDamage(amount)
+    return true
+  }
+
   /** 1 打鍵を処理します。 */
   type(char: string, now: number): void {
     this.tick(now)
@@ -512,6 +560,9 @@ export class Battle {
 
   private defeatEnemy(): void {
     this.collectSpellings()
+    this.stats.defeated.push(this.enemy.id)
+    // 攻撃フェーズ中に倒したときは、そこでターンが終わった扱いです（スキルで倒したときは違います）。
+    const turnEnded = this.phase === 'attack'
     const defeated = this.enemy.name
     if (this.waveIndex >= this.waveCount - 1) {
       this.phase = 'won'
@@ -532,6 +583,7 @@ export class Battle {
     this.prompt = null
     this.next = this.rollAttack()
     this.events.push({ type: 'waveClear', defeated })
+    if (turnEnded) this.startCommandPhase()
   }
 
   /** 攻撃フェーズの時間切れ。敵が行動します。 */
@@ -619,6 +671,22 @@ export class Battle {
     this.defense = null
     this.prompt = null
     this.lockedAction = null
+    this.startCommandPhase()
+  }
+
+  /** ターンが終わって次のコマンドフェーズに入るときの処理（クールダウンとパッシブ）。 */
+  private startCommandPhase(): void {
+    let heal = 0
+    for (const member of this.party) {
+      member.cooldown = Math.max(0, member.cooldown - 1)
+      if (member.def.passive.effect.type === 'healPerTurn') {
+        const amount = Math.round(this.player.maxHp * passiveHealRate(member.def, member.passiveLv))
+        const before = this.hp
+        this.hp = Math.min(this.player.maxHp, this.hp + amount)
+        heal += this.hp - before
+      }
+    }
+    this.report = { ...this.report, heal }
   }
 
   private lose(): void {
@@ -654,7 +722,7 @@ export class Battle {
   }
 
   private emptyReport(kind: TurnReport['kind']): TurnReport {
-    return { kind, turn: 0, damage: 0, strokes: 0, misses: 0, action: null, defense: null, fatigueDamage: 0 }
+    return { kind, turn: 0, damage: 0, strokes: 0, misses: 0, action: null, defense: null, fatigueDamage: 0, heal: 0 }
   }
 
   private currentReport(
@@ -671,6 +739,7 @@ export class Battle {
       action,
       defense,
       fatigueDamage: this.turnFatigue,
+      heal: 0,
     }
   }
 

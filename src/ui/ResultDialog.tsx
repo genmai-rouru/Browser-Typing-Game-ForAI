@@ -99,10 +99,23 @@ export function ResultDialog({ summary, shards, onRetry, onLeave }: Props) {
               <span className="reward-label">欠片（仮の報酬）</span>
               <span className="reward-value">{summary.won ? `+${summary.shards.toLocaleString()}` : '—'}</span>
             </div>
+            {summary.partners.map((p) => (
+              <div key={p.id}>
+                <div className="reward-row">
+                  <span className="reward-label">{p.name}の経験値</span>
+                  <span className="reward-value">+{p.exp.toLocaleString()}</span>
+                </div>
+                {p.levelUps.map((up) => (
+                  <p key={up.skill} className="reward-up">
+                    {up.skill === 'passive' ? 'パッシブ' : '固有スキル'}のレベルアップ！ Lv {up.from} → <b>Lv {up.to}</b>
+                  </p>
+                ))}
+              </div>
+            ))}
             <p className="panel-note">
               所持している欠片: {shards.toLocaleString()}
               <br />
-              パートナー経験値・アイテム・討伐報酬金は準備中です。
+              アイテム・討伐報酬金は準備中です。
             </p>
           </section>
         </div>

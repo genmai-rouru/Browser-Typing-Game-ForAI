@@ -157,6 +157,15 @@ export function fatigueAttackMultiplier(stacks: number): number {
   return Math.max(FATIGUE_ATK_FLOOR, 1 - FATIGUE_ATK_DOWN * stacks)
 }
 
+// --- パートナー ---
+/** スキルレベルの上限（0 から始まります）。 */
+export const SKILL_MAX_LEVEL = 10
+
+/** スキルがそのレベルに上がるのに必要な、パートナーの累計経験値。仮。200, 600, 1200 … 11000 */
+export function skillExpThreshold(level: number): number {
+  return 100 * level * (level + 1)
+}
+
 // --- 報酬（お金とアイテムが決まるまでの仮） ---
 export function expReward(damage: number, requestId: number, won: boolean): number {
   return Math.floor(damage / 12) + (won ? requestId * 30 : 0)

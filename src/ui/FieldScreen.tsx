@@ -4,8 +4,10 @@ import { Battle, type BattleEvent, type DefenseResult, type TurnReport } from '.
 import { requestById } from '../game/enemies.ts'
 import { genreInfo } from '../game/genres.ts'
 import type { BattleSummary } from '../game/rewards.ts'
+import { ROLE_NAMES, type PartnerRole } from '../game/partners.ts'
 import { buildLoadout, type SaveData } from '../game/save.ts'
 import type { EnemyAction, GenreId, PromptKind } from '../game/types.ts'
+import { PartnerPortrait } from './PartnerPortrait.tsx'
 import { ResultDialog } from './ResultDialog.tsx'
 
 interface Props {
@@ -155,6 +157,11 @@ export function FieldScreen({ requestId, save, summary, onFinish, onLeave, onRet
           if (event.amount > 0) shake(playerRef.current, 8, 220)
           showBanner(event.amount === 0 ? '回避！' : `${event.amount} ダメージ`, event.amount === 0 ? 'info' : 'danger')
           break
+        case 'partnerSkill':
+          pop(`${event.skill} ${event.amount}`, 'burst', 0.4)
+          shake(enemyRef.current, 12, 320)
+          showBanner(`${event.partner}「${event.skill}」！`, 'info')
+          break
         case 'waveClear':
           showBanner(`${event.defeated}を倒した！`, 'info')
           break
@@ -220,6 +227,11 @@ export function FieldScreen({ requestId, save, summary, onFinish, onLeave, onRet
         // 数字キーは、セットの並び順（1〜9 が 1〜9 枠目、0 が 10 枠目）に対応します。
         const genre = battle.genres[slotIndexOfKey(e.key)]
         if (genre) battle.switchGenre(genre)
+      } else if (battle.phase === 'command' && SKILL_KEYS[e.key.toLowerCase()]) {
+        // コマンドフェーズでは F で前衛、J で後衛の固有スキルを使います。
+        e.preventDefault()
+        if (e.repeat) return
+        battle.useSkill(SKILL_KEYS[e.key.toLowerCase()], now)
       } else if (e.key.length === 1) {
         e.preventDefault()
         if (e.repeat) return
@@ -242,6 +254,12 @@ export function FieldScreen({ requestId, save, summary, onFinish, onLeave, onRet
 
   const proceed = () => {
     battle.proceed(performance.now())
+    rerender()
+  }
+
+  const triggerSkill = (role: PartnerRole) => {
+    battle.useSkill(role, performance.now())
+    handleEvents()
     rerender()
   }
 
@@ -345,6 +363,22 @@ export function FieldScreen({ requestId, save, summary, onFinish, onLeave, onRet
         {fatigue > 0 && <span className="fatigue-chip">疲労 {fatigue}</span>}
       </section>
 
+      {battle.party.length > 0 && (
+        <section className="party-strip" aria-label="同行しているパートナー">
+          {battle.party.map((m) => (
+            <div key={m.def.id} className="party-chip">
+              <PartnerPortrait partner={m.def} size="small" />
+              <span className="party-chip-body">
+                <span className="party-chip-name">{m.def.name}</span>
+                <span className={`party-chip-cd ${m.cooldown <= 0 ? 'is-ready' : ''}`}>
+                  {m.def.unique.name}：{m.cooldown <= 0 ? '使用可' : `あと ${m.cooldown} ターン`}
+                </span>
+              </span>
+            </div>
+          ))}
+        </section>
+      )}
+
       <nav className="genre-tabs" aria-label="お題のジャンル">
         {Array.from({ length: MAX_GENRE_SLOTS }, (_, index) => {
           const id = battle.genres[index]
@@ -403,7 +437,20 @@ export function FieldScreen({ requestId, save, summary, onFinish, onLeave, onRet
             <PromptGuide typed={prompt.session.guide().typed} rest={prompt.session.guide().rest} />
           </>
         ) : (
-          <CommandPanel report={report} ended={battle.ended} nextEnemy={enemy.name} onProceed={proceed} />
+          <CommandPanel
+            report={report}
+            ended={battle.ended}
+            nextEnemy={enemy.name}
+            onProceed={proceed}
+            skills={battle.party.map((m) => ({
+              role: m.def.role,
+              partner: m.def.name,
+              name: m.def.unique.name,
+              cooldown: m.cooldown,
+              ready: battle.canUseSkill(m.def.role),
+            }))}
+            onSkill={triggerSkill}
+          />
         )}
       </section>
 
@@ -485,16 +532,31 @@ function PromptGuide({ typed, rest }: { typed: string; rest: string }) {
 }
 
 /** コマンドフェーズ。直前の経過（簡易リザルト）を表示し、次のターンへ進みます。 */
+interface SkillButton {
+  role: PartnerRole
+  partner: string
+  name: string
+  cooldown: number
+  ready: boolean
+}
+
+const SKILL_KEYS: Readonly<Record<string, PartnerRole>> = { f: 'front', j: 'back' }
+const SKILL_KEY_LABEL: Readonly<Record<PartnerRole, string>> = { front: 'F', back: 'J' }
+
 function CommandPanel({
   report,
   ended,
   nextEnemy,
   onProceed,
+  skills,
+  onSkill,
 }: {
   report: TurnReport
   ended: boolean
   nextEnemy: string
   onProceed: () => void
+  skills: SkillButton[]
+  onSkill: (role: PartnerRole) => void
 }) {
   if (ended) return <div className="command" />
   const title =
@@ -529,6 +591,24 @@ function CommandPanel({
         </p>
       )}
       {report.fatigueDamage > 0 && <p className="command-line">疲労で {report.fatigueDamage} ダメージを受けた</p>}
+      {report.heal > 0 && <p className="command-line">パートナーのパッシブで HP が {report.heal} 回復した</p>}
+      {skills.length > 0 && (
+        <div className="command-skills">
+          {skills.map((s) => (
+            <button
+              key={s.role}
+              type="button"
+              className="ghost-button"
+              disabled={!s.ready}
+              onClick={() => onSkill(s.role)}
+              title={`${ROLE_NAMES[s.role]}：${s.partner}`}
+            >
+              {s.name}
+              {s.ready ? <kbd>{SKILL_KEY_LABEL[s.role]}</kbd> : <span className="cd-note">あと {s.cooldown} ターン</span>}
+            </button>
+          ))}
+        </div>
+      )}
       <p className="command-items">アイテム：準備中</p>
       <button type="button" className="primary-button" onClick={onProceed}>
         {report.kind === 'start' ? '戦闘開始' : '次のターンへ'} <kbd>Space</kbd>
