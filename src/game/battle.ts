@@ -13,6 +13,7 @@ import {
   PRR_LOSS_PER_TYPO,
   PRR_RECOVER_PER_WAVE,
   RESUME_INPUT_LOCK_MS,
+  SURPRISED_TIME_FACTOR,
   defenseDamage,
   defenseTimeMs,
   effectiveDefense,
@@ -21,6 +22,7 @@ import {
   keyMultiplier,
 } from './balance.ts'
 import { enemyById, patternIndex } from './enemies.ts'
+import { itemById, type ItemDef } from './items.ts'
 import { passiveHealRate, uniqueStrokes, type PartnerDef, type PartnerRole } from './partners.ts'
 import { BASIC_TEXTS } from './texts/basic.ts'
 import { TEXTS } from './texts/index.ts'
@@ -56,6 +58,8 @@ export interface Loadout {
   prefs: SpellingPrefs
   /** 戦闘に持ち込むジャンルのセット（並び順どおりに切り替わります）。 */
   genres: readonly GenreId[]
+  /** 戦闘に持ち込むアイテムと個数（かばんの中の、使うと効果があるもの）。 */
+  items: Readonly<Record<string, number>>
   /** 同行するパートナーと、そのスキルレベル。 */
   party: ReadonlyArray<{ def: PartnerDef; passiveLv: number; uniqueLv: number }>
 }
@@ -97,6 +101,8 @@ export interface DefenseState {
   strong: boolean
   /** お題タイマーの長さ（ミリ秒）。 */
   limitMs: number
+  /** アイテムを使った直後で、攻撃を予測できていない（お題タイマーが短い）か。 */
+  surprised: boolean
 }
 
 export type DefenseOutcome = 'dodged' | 'reduced' | 'forced'
@@ -125,6 +131,8 @@ export interface TurnReport {
   fatigueDamage: number
   /** このコマンドフェーズの開始時に、パートナーのパッシブで回復した HP。 */
   heal: number
+  /** そのターンにアイテムを使った場合、その名前。 */
+  usedItem?: string
   /** waveClear のとき、倒した敵の名前。 */
   defeated?: string
 }
@@ -140,6 +148,7 @@ export type BattleEvent =
   | { type: 'playerDamage'; amount: number; result: DefenseResult }
   | { type: 'waveClear'; defeated: string }
   | { type: 'partnerSkill'; partner: string; skill: string; amount: number }
+  | { type: 'itemUsed'; name: string; text: string }
   | { type: 'end'; status: 'won' | 'lost' }
 
 export interface BattleStats {
@@ -157,6 +166,8 @@ export interface BattleStats {
   keyStrokes: Record<string, number>
   /** 倒した敵の id（倒した順）。 */
   defeated: string[]
+  /** 使ったアイテムと個数。 */
+  usedItems: Record<string, number>
   /** 実際に使われた綴り（ガイドの好み学習用）。 */
   spellings: Record<string, string>
 }
@@ -189,6 +200,10 @@ export class Battle {
   readonly player: PlayerStats
   /** 同行しているパートナー。 */
   readonly party: PartyMember[]
+  /** 持ち込んだアイテムの残り個数。 */
+  readonly items: Record<string, number>
+  /** このターンにパートナーの固有スキルを使ったか（使うと、そのターンはアイテムを使えません）。 */
+  skillUsedThisTurn = false
 
   phase: Phase = 'command'
   /** いまのウェーブ（0 始まり）。 */
@@ -230,6 +245,8 @@ export class Battle {
   private turnStrokes = 0
   private turnMisses = 0
   private turnFatigue = 0
+  /** このターンに使ったアイテムの名前（経過の表示用）。 */
+  private usedItemName: string | null = null
   /** 疲労ダメージの端数。 */
   private fatigueCarry = 0
   private readonly recent = new Set<string>()
@@ -266,8 +283,10 @@ export class Battle {
       latencyMs: 0,
       keyStrokes: {},
       defeated: [],
+      usedItems: {},
       spellings: {},
     }
+    this.items = { ...loadout.items }
     // 固有スキルは、戦闘開始の時点からクールダウンが始まっています。
     this.party = loadout.party.map((m) => ({ ...m, cooldown: m.def.unique.cooldown }))
     this.next = this.rollAttack()
@@ -399,6 +418,7 @@ export class Battle {
     this.timeLeftMs = this.timeLimitMs = this.attackTimeMs
     this.lockedAction = null
     this.turnDamage = this.turnStrokes = this.turnMisses = this.turnFatigue = 0
+    this.usedItemName = null
     this.fatigueCarry = 0
     this.setAttackPrompt(this.next)
     this.next = this.rollAttack()
@@ -423,12 +443,56 @@ export class Battle {
     const member = this.partyMember(role)
     if (!member || !this.canUseSkill(role)) return false
     member.cooldown = member.def.unique.cooldown
+    this.skillUsedThisTurn = true
     const amount = Math.round(this.player.atk * uniqueStrokes(member.def, member.uniqueLv))
     // スキルで倒したときの経過表示が、前のターンの数値と混ざらないようにします。
     this.turnDamage = this.turnStrokes = this.turnMisses = this.turnFatigue = 0
+    this.usedItemName = null
     this.events.push({ type: 'partnerSkill', partner: member.def.name, skill: member.def.unique.name, amount })
     this.dealDamage(amount)
     return true
+  }
+
+  canUseItem(id: string): boolean {
+    if (this.phase !== 'command' || this.pausedFlag || this.skillUsedThisTurn) return false
+    return (this.items[id] ?? 0) > 0 && !!itemById(id)?.effect
+  }
+
+  /**
+   * アイテムを使います（コマンドフェーズでのみ、1 ターンに 1 個）。
+   * 使うとそのターンは攻撃できず、すぐ敵の行動に移ります。予告が無いぶん、防御のお題タイマーは短くなります。
+   */
+  useItem(id: string, now: number): boolean {
+    this.tick(now)
+    const def = itemById(id)
+    if (!def || !this.canUseItem(id)) return false
+    this.items[id]--
+    this.stats.usedItems[id] = (this.stats.usedItems[id] ?? 0) + 1
+    this.events.push({ type: 'itemUsed', name: def.name, text: this.applyItem(def) })
+    // 攻撃フェーズを飛ばして 1 ターン進めます。
+    this.turn++
+    this.stats.turns++
+    this.turnDamage = this.turnStrokes = this.turnMisses = this.turnFatigue = 0
+    this.usedItemName = def.name
+    this.enemyAct(true)
+    return true
+  }
+
+  private applyItem(def: ItemDef): string {
+    const effect = def.effect!
+    if (effect.type === 'healHp') {
+      const before = this.hp
+      this.hp = Math.min(this.player.maxHp, this.hp + effect.amount)
+      return `HP が ${this.hp - before} 回復`
+    }
+    if (effect.type === 'healMp') {
+      const before = this.mp
+      this.mp = Math.min(this.player.maxMp, this.mp + effect.amount)
+      return `MP が ${this.mp - before} 回復`
+    }
+    const before = this.prr
+    this.prr = Math.min(this.player.prr, this.prr + effect.amount)
+    return `校正力が ${this.prr - before} 回復`
   }
 
   /** 1 打鍵を処理します。 */
@@ -589,6 +653,14 @@ export class Battle {
   /** 攻撃フェーズの時間切れ。敵が行動します。 */
   private endAttack(): void {
     this.collectSpellings()
+    this.enemyAct(false)
+  }
+
+  /**
+   * 敵が行動します。攻撃なら防御フェーズに入ります。
+   * surprised は、アイテムを使って予告なしに敵の行動を迎えた場合です。
+   */
+  private enemyAct(surprised: boolean): void {
     const action = this.lockedAction ?? this.currentAction()
     this.actionIdx = (this.actionIdx + 1) % this.enemy.patterns[this.patternIdx].actions.length
     if (action.type === 'idle') {
@@ -612,7 +684,10 @@ export class Battle {
       action,
       base: Math.round(this.enemy.attack * (action.power ?? 1)),
       strong,
-      limitMs: defenseTimeMs(session.shortestLength, this.enemy.kpm, strong, this.request.difficulty),
+      limitMs:
+        defenseTimeMs(session.shortestLength, this.enemy.kpm, strong, this.request.difficulty) *
+        (surprised ? SURPRISED_TIME_FACTOR : 1),
+      surprised,
     }
     this.phase = 'defenseIntro'
     this.timeLeftMs = this.timeLimitMs = DEFENSE_INTRO_MS
@@ -676,6 +751,7 @@ export class Battle {
 
   /** ターンが終わって次のコマンドフェーズに入るときの処理（クールダウンとパッシブ）。 */
   private startCommandPhase(): void {
+    this.skillUsedThisTurn = false
     let heal = 0
     for (const member of this.party) {
       member.cooldown = Math.max(0, member.cooldown - 1)
@@ -740,6 +816,7 @@ export class Battle {
       defense,
       fatigueDamage: this.turnFatigue,
       heal: 0,
+      usedItem: this.usedItemName ?? undefined,
     }
   }
 

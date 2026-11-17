@@ -4,6 +4,7 @@ import { Battle, type BattleEvent, type DefenseResult, type TurnReport } from '.
 import { requestById } from '../game/enemies.ts'
 import { genreInfo } from '../game/genres.ts'
 import type { BattleSummary } from '../game/rewards.ts'
+import { ITEMS, rarityStars, type ItemDef } from '../game/items.ts'
 import { ROLE_NAMES, type PartnerRole } from '../game/partners.ts'
 import { buildLoadout, type SaveData } from '../game/save.ts'
 import type { EnemyAction, GenreId, PromptKind } from '../game/types.ts'
@@ -17,7 +18,9 @@ interface Props {
   summary: BattleSummary | null
   /** 決着がついたとき（勝利・敗北）に呼ばれます。 */
   onFinish: (battle: Battle) => void
-  /** 退却、または結果ダイアログの「部室へ戻る」。 */
+  /** 退却したとき。使ったアイテムを減らすために、戦闘の状態を渡します。 */
+  onRetreat: (battle: Battle) => void
+  /** 結果ダイアログの「部室へ戻る」。 */
   onLeave: () => void
   /** 結果ダイアログの「再出現まで待機」（同じ依頼にもう一度挑む）。 */
   onRetry: () => void
@@ -63,7 +66,7 @@ function describeDefense(result: DefenseResult): string {
   return `${result.damage} ダメージを受けた（打ち切り率 ${rate}）`
 }
 
-export function FieldScreen({ requestId, save, summary, onFinish, onLeave, onRetry }: Props) {
+export function FieldScreen({ requestId, save, summary, onFinish, onRetreat, onLeave, onRetry }: Props) {
   // 戦闘の状態は Battle クラスが持ちます。React 側は毎フレーム再描画するだけです。
   const [battle] = useState(() => new Battle(requestById(requestId), buildLoadout(save), save.lastGenre))
   const [, rerender] = useReducer((n: number) => n + 1, 0)
@@ -72,6 +75,8 @@ export function FieldScreen({ requestId, save, summary, onFinish, onLeave, onRet
   const [imeWarning, setImeWarning] = useState(false)
   const [retreatOpen, setRetreatOpen] = useState(false)
   const [inputLocked, setInputLocked] = useState(false)
+  /** コマンドフェーズで、アイテムの一覧を開いているか。 */
+  const [itemsOpen, setItemsOpen] = useState(false)
 
   const enemyRef = useRef<HTMLDivElement>(null)
   const cardRef = useRef<HTMLDivElement>(null)
@@ -162,6 +167,9 @@ export function FieldScreen({ requestId, save, summary, onFinish, onLeave, onRet
           shake(enemyRef.current, 12, 320)
           showBanner(`${event.partner}「${event.skill}」！`, 'info')
           break
+        case 'itemUsed':
+          showBanner(`${event.name}を使った（${event.text}）`, 'info')
+          break
         case 'waveClear':
           showBanner(`${event.defeated}を倒した！`, 'info')
           break
@@ -205,9 +213,11 @@ export function FieldScreen({ requestId, save, summary, onFinish, onLeave, onRet
       if (e.ctrlKey || e.metaKey || e.altKey) return
       const now = performance.now()
 
+      const listOpen = itemsOpen && battle.phase === 'command'
       if (e.key === 'Escape') {
         e.preventDefault()
         if (retreatOpen) closeRetreat()
+        else if (listOpen) setItemsOpen(false)
         else openRetreat()
         return
       }
@@ -222,6 +232,16 @@ export function FieldScreen({ requestId, save, summary, onFinish, onLeave, onRet
         e.preventDefault()
         if (e.repeat) return
         battle.proceed(now)
+      } else if (listOpen && slotIndexOfKey(e.key) >= 0) {
+        // アイテムの一覧を開いている間は、数字キーでアイテムを選びます。
+        e.preventDefault()
+        if (e.repeat) return
+        const item = heldItems(battle)[slotIndexOfKey(e.key)]
+        if (item && battle.useItem(item.id, now)) setItemsOpen(false)
+      } else if (battle.phase === 'command' && e.key.toLowerCase() === 'i') {
+        e.preventDefault()
+        if (e.repeat) return
+        setItemsOpen((open) => !open)
       } else if (slotIndexOfKey(e.key) >= 0) {
         e.preventDefault()
         // 数字キーは、セットの並び順（1〜9 が 1〜9 枠目、0 が 10 枠目）に対応します。
@@ -245,7 +265,7 @@ export function FieldScreen({ requestId, save, summary, onFinish, onLeave, onRet
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [battle, handleEvents, retreatOpen, openRetreat, closeRetreat])
+  }, [battle, handleEvents, retreatOpen, openRetreat, closeRetreat, itemsOpen])
 
   const switchTo = (genre: GenreId) => {
     battle.switchGenre(genre)
@@ -254,6 +274,13 @@ export function FieldScreen({ requestId, save, summary, onFinish, onLeave, onRet
 
   const proceed = () => {
     battle.proceed(performance.now())
+    setItemsOpen(false)
+    rerender()
+  }
+
+  const triggerItem = (id: string) => {
+    if (battle.useItem(id, performance.now())) setItemsOpen(false)
+    handleEvents()
     rerender()
   }
 
@@ -427,6 +454,9 @@ export function FieldScreen({ requestId, save, summary, onFinish, onLeave, onRet
               {defending && (
                 <span className="prompt-note">打ち切り率 {Math.round(battle.defenseProgress * 100)}%</span>
               )}
+              {defending && battle.defense?.surprised && (
+                <span className="prompt-note is-warn">予測できず、お題タイマー −10%</span>
+              )}
               {battle.blocked && <span className="prompt-note is-warn">MP 不足：ジャンルを切り替えてください</span>}
             </div>
             <p className={`prompt-text kind-${prompt.kind}`}>{prompt.entry.text}</p>
@@ -450,6 +480,11 @@ export function FieldScreen({ requestId, save, summary, onFinish, onLeave, onRet
               ready: battle.canUseSkill(m.def.role),
             }))}
             onSkill={triggerSkill}
+            items={heldItems(battle).map((def) => ({ def, count: battle.items[def.id] }))}
+            itemsOpen={itemsOpen}
+            itemsBlocked={battle.skillUsedThisTurn}
+            onToggleItems={() => setItemsOpen((open) => !open)}
+            onItem={triggerItem}
           />
         )}
       </section>
@@ -482,12 +517,12 @@ export function FieldScreen({ requestId, save, summary, onFinish, onLeave, onRet
             <h2 id="retreat-title" className="screen-title">
               退却しますか？
             </h2>
-            <p className="dialog-body">退却すると、この戦闘の報酬は手に入りません。</p>
+            <p className="dialog-body">退却すると、この戦闘の報酬は手に入りません。使ったアイテムは戻りません。</p>
             <div className="dialog-actions">
               <button type="button" className="primary-button" autoFocus onClick={closeRetreat}>
                 戦闘に戻る <kbd>Esc</kbd>
               </button>
-              <button type="button" className="ghost-button" onClick={onLeave}>
+              <button type="button" className="ghost-button" onClick={() => onRetreat(battle)}>
                 退却する
               </button>
             </div>
@@ -495,7 +530,7 @@ export function FieldScreen({ requestId, save, summary, onFinish, onLeave, onRet
         </div>
       )}
 
-      {summary && <ResultDialog summary={summary} shards={save.shards} onRetry={onRetry} onLeave={onLeave} />}
+      {summary && <ResultDialog summary={summary} money={save.money} onRetry={onRetry} onLeave={onLeave} />}
 
       {imeWarning && (
         <div className="ime-warning" role="alert">
@@ -532,6 +567,11 @@ function PromptGuide({ typed, rest }: { typed: string; rest: string }) {
 }
 
 /** コマンドフェーズ。直前の経過（簡易リザルト）を表示し、次のターンへ進みます。 */
+/** 持ち込んだアイテムのうち、まだ残っているもの（一覧の並び順）。 */
+function heldItems(battle: Battle): ItemDef[] {
+  return ITEMS.filter((def) => (battle.items[def.id] ?? 0) > 0)
+}
+
 interface SkillButton {
   role: PartnerRole
   partner: string
@@ -550,6 +590,11 @@ function CommandPanel({
   onProceed,
   skills,
   onSkill,
+  items,
+  itemsOpen,
+  itemsBlocked,
+  onToggleItems,
+  onItem,
 }: {
   report: TurnReport
   ended: boolean
@@ -557,6 +602,12 @@ function CommandPanel({
   onProceed: () => void
   skills: SkillButton[]
   onSkill: (role: PartnerRole) => void
+  items: Array<{ def: ItemDef; count: number }>
+  itemsOpen: boolean
+  /** このターンに固有スキルを使ったため、アイテムを使えない状態か。 */
+  itemsBlocked: boolean
+  onToggleItems: () => void
+  onItem: (id: string) => void
 }) {
   if (ended) return <div className="command" />
   const title =
@@ -584,6 +635,7 @@ function CommandPanel({
           </div>
         </dl>
       )}
+      {report.usedItem && <p className="command-line">アイテム「{report.usedItem}」を使った</p>}
       {report.action && (
         <p className="command-line">
           敵の行動：<b>{ACTION_LABEL[report.action.type]}</b>「{report.action.name}」
@@ -609,7 +661,39 @@ function CommandPanel({
           ))}
         </div>
       )}
-      <p className="command-items">アイテム：準備中</p>
+      <div className="command-items">
+        <button
+          type="button"
+          className="ghost-button"
+          disabled={items.length === 0 || itemsBlocked}
+          aria-expanded={itemsOpen}
+          onClick={onToggleItems}
+        >
+          アイテム <kbd>I</kbd>
+        </button>
+        <span className="cd-note">
+          {itemsBlocked
+            ? '固有スキルを使ったターンは、アイテムを使えません'
+            : items.length === 0
+              ? 'かばんに使えるアイテムがありません'
+              : '使うと攻撃せずに、敵の行動へ移ります'}
+        </span>
+      </div>
+      {itemsOpen && !itemsBlocked && items.length > 0 && (
+        <ol className="command-item-list">
+          {items.map(({ def, count }, index) => (
+            <li key={def.id}>
+              <button type="button" className="command-item" onClick={() => onItem(def.id)}>
+                {index < MAX_GENRE_SLOTS && <kbd>{slotKey(index)}</kbd>}
+                <span className="item-rarity">{rarityStars(def.rarity)}</span>
+                <span className="item-name">{def.name}</span>
+                <span className="item-desc">{def.description}</span>
+                <span className="item-count">×{count}</span>
+              </button>
+            </li>
+          ))}
+        </ol>
+      )}
       <button type="button" className="primary-button" onClick={onProceed}>
         {report.kind === 'start' ? '戦闘開始' : '次のターンへ'} <kbd>Space</kbd>
       </button>

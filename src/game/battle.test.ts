@@ -57,13 +57,20 @@ interface Setup {
 }
 
 function setup({ enemies = [enemy('a', 1e9, [IDLE])], loadout = {}, rng = noCrit, difficulty = 1 }: Setup = {}) {
-  const request: RequestDef = { id: 1, title: 'テスト', difficulty, waves: enemies.map((e) => e.id) }
+  const request: RequestDef = {
+    id: 1,
+    title: 'テスト',
+    difficulty,
+    waves: enemies.map((e) => e.id),
+    rewards: { first: [], repeat: [] },
+  }
   const full: Loadout = {
     stats: playerStats(1),
     keyLevels: {},
     prefs: {},
     genres: ['school', 'society', 'nature', 'food'],
     party: [],
+    items: {},
     ...loadout,
   }
   const battle = new Battle(request, full, 'school', rng, (id) => enemies.find((e) => e.id === id)!)
@@ -546,7 +553,7 @@ describe('一時停止', () => {
 })
 
 describe('報酬と記録', () => {
-  it('勝利すると依頼が達成済みになり、経験値と欠片が入る', () => {
+  it('勝利すると依頼が達成済みになり、経験値とお金が入る', () => {
     const save = createSave()
     const b = new Battle(REQUESTS[0], buildLoadout(save), 'school', noCrit)
     b.tick(0)
@@ -561,8 +568,8 @@ describe('報酬と記録', () => {
     expect(summary).toMatchObject({ won: true, firstClear: true, misses: 0, accuracy: 1 })
     expect(summary.exp).toBe(expReward(enemyById('goji').hp, 1, true))
     expect(next.clearedRequest).toBe(1)
-    expect(next.shards).toBe(summary.shards)
-    expect(summary.shards).toBeGreaterThan(0)
+    expect(summary.money).toBe(300)
+    expect(next.money).toBe(300)
     expect(next.battles).toBe(1)
   })
 
@@ -579,7 +586,9 @@ describe('報酬と記録', () => {
     expect(summary.won).toBe(false)
     expect(summary.exp).toBe(expReward(b.stats.damage, 1, false))
     expect(summary.exp).toBeGreaterThan(0)
-    expect(summary.shards).toBe(0)
+    expect(summary.money).toBe(0)
+    expect(summary.items).toEqual([])
+    expect(next.money).toBe(0)
     expect(next.clearedRequest).toBe(0)
   })
 
@@ -598,12 +607,13 @@ describe('報酬と記録', () => {
     expect(summary.rkpm).toBe(Math.round((3 / (ATTACK_TIME_MS - wait)) * 60_000))
   })
 
-  it('キー強化: 欠片を払ってレベルが上がる。足りなければ変化しない', () => {
-    const poor = { ...createSave(), shards: keyUpgradeCost(0) - 1 }
+  it('キー強化: お金を払ってレベルが上がる。足りなければ変化しない', () => {
+    expect(keyUpgradeCost(0)).toBe(100)
+    const poor = { ...createSave(), money: keyUpgradeCost(0) - 1 }
     expect(upgradeKey(poor, 'a')).toBe(poor)
-    const once = upgradeKey({ ...createSave(), shards: 100 }, 'a')
+    const once = upgradeKey({ ...createSave(), money: 1000 }, 'a')
     expect(once.keyLevels.a).toBe(1)
-    expect(once.shards).toBe(100 - keyUpgradeCost(0))
+    expect(once.money).toBe(1000 - keyUpgradeCost(0))
   })
 })
 

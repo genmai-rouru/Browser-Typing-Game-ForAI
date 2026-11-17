@@ -1,8 +1,8 @@
 /** タブとして並ぶ画面。 */
 export type TabId = 'clubroom' | 'board' | 'gym' | 'library' | 'workshop' | 'shop'
 
-/** タブ画面に加えて、他の画面の中から開く画面（部室机・部室鏡）。 */
-export type RoomId = TabId | 'desk' | 'mirror'
+/** タブ画面に加えて、他の画面の中から開く画面（部室机・部室鏡・かばんの中・部室準備室）。 */
+export type RoomId = TabId | 'desk' | 'mirror' | 'bag' | 'storage'
 
 export const TABS: ReadonlyArray<{ id: TabId; name: string }> = [
   { id: 'clubroom', name: '部室' },
@@ -22,6 +22,8 @@ export const ROOM_NAMES: Readonly<Record<RoomId, string>> = {
   shop: '購買',
   desk: '部室机',
   mirror: '部室鏡',
+  bag: 'かばんの中',
+  storage: '部室準備室',
 }
 
 /**
@@ -41,6 +43,7 @@ export function backTarget(room: RoomState): RoomId {
 
 /** いまの画面が属するタブ（部室机などは、開いた元のタブ）。 */
 export function activeTab(room: RoomState): TabId {
-  if (room.id !== 'desk' && room.id !== 'mirror') return room.id
+  const tab = TABS.find((t) => t.id === room.id)
+  if (tab) return tab.id
   return room.origin === 'board' ? 'board' : 'clubroom'
 }

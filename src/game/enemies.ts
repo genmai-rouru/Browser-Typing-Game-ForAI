@@ -1,4 +1,4 @@
-import type { EnemyAction, EnemyDef, RequestDef } from './types.ts'
+import type { EnemyAction, EnemyDef, RequestDef, Reward } from './types.ts'
 
 /**
  * 敵と討伐依頼のデータ。
@@ -18,6 +18,7 @@ export const ENEMIES: readonly EnemyDef[] = [
     hp: 800,
     attack: 18,
     kpm: 150,
+    drops: [{ itemId: 'pan', rate: 0.3 }],
     patterns: [
       { below: 1, actions: [idle('様子を見ている'), attack('体当たり')] },
       { below: 0.4, actions: [attack('体当たり')] },
@@ -31,6 +32,7 @@ export const ENEMIES: readonly EnemyDef[] = [
     hp: 1200,
     attack: 22,
     kpm: 170,
+    drops: [{ itemId: 'sports', rate: 0.3 }],
     patterns: [
       { below: 1, actions: [attack('かみつき'), idle('飛び回っている')] },
       { below: 0.5, actions: [attack('かみつき'), attack('かみつき'), idle('飛び回っている')] },
@@ -44,6 +46,7 @@ export const ENEMIES: readonly EnemyDef[] = [
     hp: 1600,
     attack: 26,
     kpm: 190,
+    drops: [{ itemId: 'eraser', rate: 0.3 }],
     patterns: [
       { below: 1, actions: [attack('なぐり書き'), attack('なぐり書き'), idle('力をためている'), strong('大なぐり書き')] },
     ],
@@ -56,6 +59,7 @@ export const ENEMIES: readonly EnemyDef[] = [
     hp: 2200,
     attack: 32,
     kpm: 200,
+    drops: [{ itemId: 'pan', rate: 0.4 }, { itemId: 'eraser', rate: 0.2 }],
     patterns: [
       { below: 1, actions: [idle('ゆっくり動き出す'), attack('叩きつけ')] },
       { below: 0.5, actions: [attack('叩きつけ'), idle('力をためている'), strong('地ならし')] },
@@ -69,6 +73,7 @@ export const ENEMIES: readonly EnemyDef[] = [
     hp: 3000,
     attack: 36,
     kpm: 230,
+    drops: [{ itemId: 'bento', rate: 0.4 }, { itemId: 'energy', rate: 0.3 }],
     boss: true,
     patterns: [
       { below: 1, actions: [attack('催促'), idle('時計を見ている'), attack('催促')] },
@@ -84,6 +89,7 @@ export const ENEMIES: readonly EnemyDef[] = [
     hp: 3500,
     attack: 34,
     kpm: 300,
+    drops: [{ itemId: 'sports', rate: 0.4 }],
     patterns: [
       { below: 1, actions: [attack('早口'), attack('早口'), idle('息つぎをしている')] },
       { below: 0.4, actions: [attack('早口'), attack('早口'), strong('まくし立て', 1.4)] },
@@ -97,6 +103,7 @@ export const ENEMIES: readonly EnemyDef[] = [
     hp: 4750,
     attack: 46,
     kpm: 240,
+    drops: [{ itemId: 'bento', rate: 0.3 }],
     patterns: [
       { below: 1, actions: [idle('長話をしている'), attack('ふり回し'), idle('長話をしている'), strong('大ふり回し')] },
       { below: 0.5, actions: [attack('ふり回し'), idle('力をためている'), strong('大ふり回し')] },
@@ -110,6 +117,7 @@ export const ENEMIES: readonly EnemyDef[] = [
     hp: 6000,
     attack: 54,
     kpm: 280,
+    drops: [{ itemId: 'energy', rate: 0.3 }],
     patterns: [
       { below: 1, actions: [attack('かぎ爪'), attack('かぎ爪'), idle('息を吸いこんでいる'), strong('ブレス')] },
       { below: 0.5, actions: [attack('かぎ爪', 1.2), idle('息を吸いこんでいる'), strong('ブレス', 1.8)] },
@@ -123,6 +131,7 @@ export const ENEMIES: readonly EnemyDef[] = [
     hp: 7500,
     attack: 62,
     kpm: 360,
+    drops: [{ itemId: 'eraser', rate: 0.4 }, { itemId: 'bento', rate: 0.2 }],
     patterns: [
       { below: 1, actions: [attack('斬撃'), attack('斬撃'), idle('構えている'), strong('一閃')] },
       { below: 0.5, actions: [attack('斬撃'), strong('一閃'), attack('斬撃', 1.2), idle('構えている')] },
@@ -136,6 +145,7 @@ export const ENEMIES: readonly EnemyDef[] = [
     hp: 11000,
     attack: 72,
     kpm: 440,
+    drops: [{ itemId: 'bento', rate: 0.5 }, { itemId: 'energy', rate: 0.5 }],
     boss: true,
     patterns: [
       { below: 1, actions: [attack('消去'), idle('こちらを見下ろしている'), attack('消去'), strong('白紙化')] },
@@ -151,17 +161,20 @@ export function enemyById(id: string): EnemyDef {
   return enemy
 }
 
+const money = (amount: number): Reward => ({ type: 'money', amount })
+const item = (itemId: string, count: number): Reward => ({ type: 'item', itemId, count })
+
 export const REQUESTS: readonly RequestDef[] = [
-  { id: 1, title: '運動場に迷い込んだ魔物', difficulty: 1, waves: ['goji'] },
-  { id: 2, title: '夕方の校舎裏の物音', difficulty: 1, waves: ['datsuji'] },
-  { id: 3, title: '落書き騒ぎの調査', difficulty: 1, waves: ['goji', 'ranpitsu'] },
-  { id: 4, title: '体育倉庫の見回り', difficulty: 2, waves: ['datsuji', 'bouyomi'] },
-  { id: 5, title: 'ゲートの番人の討伐', difficulty: 2, waves: ['ranpitsu', 'bouyomi', 'shimekiri'] },
-  { id: 6, title: '放送室を荒らす声', difficulty: 2, waves: ['hayakuchi'] },
-  { id: 7, title: '偵察部隊の迎撃', difficulty: 3, waves: ['hayakuchi', 'jouchou'] },
-  { id: 8, title: '古い竜の足止め', difficulty: 3, waves: ['jouchou', 'nandoku'] },
-  { id: 9, title: '侵攻部隊の迎撃', difficulty: 3, waves: ['hayakuchi', 'nandoku', 'chinmoku'] },
-  { id: 10, title: '魔王の討伐', difficulty: 4, waves: ['chinmoku', 'nandoku', 'hakushi'] },
+  { id: 1, title: '運動場に迷い込んだ魔物', difficulty: 1, waves: ['goji'], rewards: { first: [item('pan', 2)], repeat: [money(300)] } },
+  { id: 2, title: '夕方の校舎裏の物音', difficulty: 1, waves: ['datsuji'], rewards: { first: [item('sports', 2)], repeat: [money(600)] } },
+  { id: 3, title: '落書き騒ぎの調査', difficulty: 1, waves: ['goji', 'ranpitsu'], rewards: { first: [item('eraser', 2)], repeat: [money(900)] } },
+  { id: 4, title: '体育倉庫の見回り', difficulty: 2, waves: ['datsuji', 'bouyomi'], rewards: { first: [item('pan', 3)], repeat: [money(1200)] } },
+  { id: 5, title: 'ゲートの番人の討伐', difficulty: 2, waves: ['ranpitsu', 'bouyomi', 'shimekiri'], rewards: { first: [item('bento', 2), item('energy', 1)], repeat: [money(1500)] } },
+  { id: 6, title: '放送室を荒らす声', difficulty: 2, waves: ['hayakuchi'], rewards: { first: [item('sports', 3)], repeat: [money(1800)] } },
+  { id: 7, title: '偵察部隊の迎撃', difficulty: 3, waves: ['hayakuchi', 'jouchou'], rewards: { first: [item('bento', 2)], repeat: [money(2100)] } },
+  { id: 8, title: '古い竜の足止め', difficulty: 3, waves: ['jouchou', 'nandoku'], rewards: { first: [item('energy', 2)], repeat: [money(2400)] } },
+  { id: 9, title: '侵攻部隊の迎撃', difficulty: 3, waves: ['hayakuchi', 'nandoku', 'chinmoku'], rewards: { first: [item('bento', 3)], repeat: [money(2700)] } },
+  { id: 10, title: '魔王の討伐', difficulty: 4, waves: ['chinmoku', 'nandoku', 'hakushi'], rewards: { first: [item('bento', 3), item('energy', 3)], repeat: [money(3000)] } },
 ]
 
 export function requestById(id: number): RequestDef {

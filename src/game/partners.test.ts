@@ -24,8 +24,14 @@ function enemy(id: string, hp: number, actions: EnemyAction[], extra: Partial<En
 }
 
 function setup(enemies: EnemyDef[], party: Loadout['party'] = [{ def: KONOMI, passiveLv: 0, uniqueLv: 0 }]) {
-  const request: RequestDef = { id: 1, title: 'テスト', difficulty: 1, waves: enemies.map((e) => e.id) }
-  const loadout: Loadout = { stats: playerStats(1), keyLevels: {}, prefs: {}, genres: ['school'], party }
+  const request: RequestDef = {
+    id: 1,
+    title: 'テスト',
+    difficulty: 1,
+    waves: enemies.map((e) => e.id),
+    rewards: { first: [], repeat: [] },
+  }
+  const loadout: Loadout = { stats: playerStats(1), keyLevels: {}, prefs: {}, genres: ['school'], party, items: {} }
   const battle = new Battle(request, loadout, 'school', () => 0.99, (id) => enemies.find((e) => e.id === id)!)
   battle.tick(0)
   return battle

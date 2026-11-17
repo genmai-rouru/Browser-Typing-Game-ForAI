@@ -62,8 +62,8 @@ export function ClubroomScreen({ save, onOpen, onHelp, onReset }: Props) {
             <dd>{stats.crt.toFixed(2)}%</dd>
           </div>
           <div>
-            <dt>欠片</dt>
-            <dd>{save.shards.toLocaleString()}</dd>
+            <dt>所持金</dt>
+            <dd>{save.money.toLocaleString()} 円</dd>
           </div>
         </dl>
         <button type="button" className="text-button" onClick={onReset}>
@@ -99,6 +99,12 @@ export function ClubroomScreen({ save, onOpen, onHelp, onReset }: Props) {
           </button>
           <button type="button" className="ghost-button" onClick={() => onOpen('mirror')}>
             部室鏡
+          </button>
+          <button type="button" className="ghost-button" onClick={() => onOpen('bag')}>
+            かばんの中
+          </button>
+          <button type="button" className="ghost-button" onClick={() => onOpen('storage')}>
+            部室準備室
           </button>
           <button type="button" className="ghost-button" onClick={onHelp}>
             遊び方

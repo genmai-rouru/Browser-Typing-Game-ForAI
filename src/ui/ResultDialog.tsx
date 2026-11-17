@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react'
+import { itemById, rarityStars } from '../game/items.ts'
 import type { BattleSummary } from '../game/rewards.ts'
 
 interface Props {
   summary: BattleSummary
-  /** 報酬を受け取ったあとの、欠片の所持数。 */
-  shards: number
+  /** 報酬を受け取ったあとの所持金（円）。 */
+  money: number
   /** 「再出現まで待機」（同じ依頼にもう一度挑む）。 */
   onRetry: () => void
   /** 「部室へ戻る」。 */
@@ -12,7 +13,7 @@ interface Props {
 }
 
 /** 運動場の上に重ねて表示する、戦闘結果のダイアログ。 */
-export function ResultDialog({ summary, shards, onRetry, onLeave }: Props) {
+export function ResultDialog({ summary, money, onRetry, onLeave }: Props) {
   // 戦闘中の打鍵の勢いで誤って画面を進めないよう、少しの間だけキー操作を受け付けません。
   const [armed, setArmed] = useState(false)
   useEffect(() => {
@@ -96,8 +97,8 @@ export function ResultDialog({ summary, shards, onRetry, onLeave }: Props) {
               </p>
             )}
             <div className="reward-row">
-              <span className="reward-label">欠片（仮の報酬）</span>
-              <span className="reward-value">{summary.won ? `+${summary.shards.toLocaleString()}` : '—'}</span>
+              <span className="reward-label">討伐報酬金</span>
+              <span className="reward-value">{summary.won ? `+${summary.money.toLocaleString()} 円` : '—'}</span>
             </div>
             {summary.partners.map((p) => (
               <div key={p.id}>
@@ -112,11 +113,26 @@ export function ResultDialog({ summary, shards, onRetry, onLeave }: Props) {
                 ))}
               </div>
             ))}
-            <p className="panel-note">
-              所持している欠片: {shards.toLocaleString()}
-              <br />
-              アイテム・討伐報酬金は準備中です。
-            </p>
+            <div className="reward-row">
+              <span className="reward-label">アイテム</span>
+              <span className="reward-value small">{summary.items.length === 0 ? '—' : ''}</span>
+            </div>
+            <ul className="reward-items">
+              {summary.items.map((got) => {
+                const def = itemById(got.id)
+                if (!def) return null
+                return (
+                  <li key={got.id}>
+                    <span className="item-rarity">{rarityStars(def.rarity)}</span>
+                    <span className="reward-item-name">{def.name}</span>
+                    <span className="reward-item-count">×{got.bag + got.storage + got.lost}</span>
+                    {got.storage > 0 && <span className="reward-item-note">{got.storage} 個は部室準備室へ</span>}
+                    {got.lost > 0 && <span className="reward-item-note is-warn">{got.lost} 個は持ちきれなかった</span>}
+                  </li>
+                )
+              })}
+            </ul>
+            <p className="panel-note">所持金: {money.toLocaleString()} 円</p>
           </section>
         </div>
 

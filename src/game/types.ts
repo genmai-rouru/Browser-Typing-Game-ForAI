@@ -44,9 +44,21 @@ export interface EnemyDef {
   /** 防御お題の制限時間を決める、敵の打鍵速度（打/分）。 */
   kpm: number
   boss?: boolean
+  /** 倒したときに落とすアイテム（勝利時に、それぞれ rate の確率で手に入ります）。 */
+  drops?: Drop[]
   /** below の大きい順に並べます。先頭は below: 1（最初のパターン）。 */
   patterns: EnemyPattern[]
 }
+
+/** 敵のドロップ。rate は 0〜1 の確率です。 */
+export interface Drop {
+  itemId: string
+  rate: number
+  count?: number
+}
+
+/** 依頼の報酬 1 件。 */
+export type Reward = { type: 'money'; amount: number } | { type: 'item'; itemId: string; count: number }
 
 /** 難易度。1 が最も簡単です。 */
 export type Difficulty = 1 | 2 | 3 | 4
@@ -58,6 +70,12 @@ export interface RequestDef {
   difficulty: Difficulty
   /** 敵の id。 */
   waves: string[]
+  rewards: {
+    /** 初めて達成したときだけ手に入る報酬。 */
+    first: Reward[]
+    /** 達成するたびに手に入る報酬。 */
+    repeat: Reward[]
+  }
 }
 
 /** プレイヤーの能力値。 */

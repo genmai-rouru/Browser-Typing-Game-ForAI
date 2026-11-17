@@ -21,7 +21,7 @@ export function WorkshopScreen({ save, onChange }: Props) {
   const level = save.keyLevels[selected] ?? 0
   const cost = keyUpgradeCost(level)
   const maxed = level >= KEY_MAX_LEVEL
-  const affordable = save.shards >= cost
+  const affordable = save.money >= cost
   const maxStrokes = Math.max(1, ...FORGE_KEYS.map((k) => save.keyStrokes[k] ?? 0))
 
   useEffect(() => {
@@ -43,7 +43,7 @@ export function WorkshopScreen({ save, onChange }: Props) {
   return (
     <main className="forge">
       <p className="shard-count">
-        欠片 <b>{save.shards.toLocaleString()}</b>
+        所持金 <b>{save.money.toLocaleString()}</b> 円
       </p>
 
       <div className="forge-grid">
@@ -113,11 +113,11 @@ export function WorkshopScreen({ save, onChange }: Props) {
               '最大まで強化済み'
             ) : (
               <>
-                強化する（欠片 {cost}）<kbd>Enter</kbd>
+                強化する（{cost.toLocaleString()} 円）<kbd>Enter</kbd>
               </>
             )}
           </button>
-          {!maxed && !affordable && <p className="panel-note">欠片があと {cost - save.shards} 足りません。</p>}
+          {!maxed && !affordable && <p className="panel-note">所持金があと {(cost - save.money).toLocaleString()} 円足りません。</p>}
 
           <p className="panel-note">キーの付け替えは、購買でキーを買えるようになってから追加します。</p>
         </section>

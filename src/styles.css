@@ -2521,3 +2521,170 @@ ul.slot-list .slot {
     grid-template-columns: 1fr;
   }
 }
+
+/* =========================================================
+   持ち物（かばんの中・部室準備室）とアイテム
+   ========================================================= */
+.inventory-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.category-tabs {
+  display: flex;
+  gap: 6px;
+}
+
+.category-tab {
+  padding: 5px 16px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--paper);
+  cursor: pointer;
+  font-weight: 500;
+}
+
+.category-tab.is-active {
+  border-color: var(--ink);
+  background: var(--ink);
+  color: var(--paper);
+  font-weight: 700;
+}
+
+.slot-usage {
+  color: var(--ink-soft);
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+}
+
+.item-list {
+  display: grid;
+  gap: 6px;
+}
+
+.item-row {
+  display: grid;
+  grid-template-columns: 6.5em 1fr auto auto;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--paper);
+}
+
+.item-rarity {
+  color: var(--gold);
+  font-size: 0.8rem;
+  letter-spacing: 0.05em;
+  white-space: nowrap;
+}
+
+.item-body {
+  display: grid;
+  min-width: 0;
+}
+
+.item-name {
+  font-weight: 700;
+}
+
+.item-desc {
+  color: var(--ink-soft);
+  font-size: 0.8rem;
+}
+
+.item-count {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 運動場のコマンドフェーズ */
+.command-items {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  color: inherit;
+  font-size: inherit;
+}
+
+.command-item-list {
+  display: grid;
+  gap: 6px;
+  width: 100%;
+}
+
+.command-item {
+  display: grid;
+  grid-template-columns: auto 5.5em auto 1fr auto;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 6px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--paper);
+  cursor: pointer;
+  text-align: left;
+}
+
+.command-item:hover {
+  border-color: var(--ink-faint);
+}
+
+/* 結果ダイアログ */
+.reward-value.small {
+  font-size: 1rem;
+}
+
+.reward-items {
+  display: grid;
+  gap: 4px;
+  margin: 6px 0 4px;
+  font-size: 0.9rem;
+}
+
+.reward-items li {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.reward-item-name {
+  font-weight: 700;
+}
+
+.reward-item-count {
+  font-family: var(--font-mono);
+}
+
+.reward-item-note {
+  color: var(--ink-soft);
+  font-size: 0.78rem;
+}
+
+.reward-item-note.is-warn {
+  color: var(--seal);
+}
+
+@media (max-width: 760px) {
+  .item-row {
+    grid-template-columns: 1fr auto;
+  }
+
+  .command-item {
+    grid-template-columns: auto 1fr auto;
+  }
+
+  .command-item .item-rarity,
+  .command-item .item-desc {
+    display: none;
+  }
+}

@@ -1,12 +1,13 @@
 import { useCallback, useState } from 'react'
 import type { Battle } from './game/battle.ts'
-import { applyBattle, type BattleSummary } from './game/rewards.ts'
+import { applyBattle, applyRetreat, type BattleSummary } from './game/rewards.ts'
 import { clearSave, createSave, loadSave, storeSave, type SaveData } from './game/save.ts'
 import { BoardScreen } from './ui/BoardScreen.tsx'
 import { ClubroomScreen } from './ui/ClubroomScreen.tsx'
 import { DeskScreen } from './ui/DeskScreen.tsx'
 import { FieldScreen } from './ui/FieldScreen.tsx'
 import { HelpDialog } from './ui/HelpDialog.tsx'
+import { InventoryScreen } from './ui/InventoryScreen.tsx'
 import { LibraryScreen } from './ui/LibraryScreen.tsx'
 import { PlaceholderScreen } from './ui/PlaceholderScreen.tsx'
 import { Shell } from './ui/Shell.tsx'
@@ -54,6 +55,12 @@ export default function App() {
     setField((prev) => (prev ? { ...prev, summary } : prev))
   }
 
+  /** 退却します。報酬は無く、使ったアイテムだけが減ります。 */
+  const retreat = (battle: Battle) => {
+    updateSave(applyRetreat(save, battle))
+    leaveField()
+  }
+
   /** 運動場を離れて部室に戻ります。 */
   const leaveField = () => {
     setField(null)
@@ -75,6 +82,7 @@ export default function App() {
           save={save}
           summary={field.summary}
           onFinish={finishBattle}
+          onRetreat={retreat}
           onLeave={leaveField}
           onRetry={() => startBattle(field.requestId)}
         />
@@ -99,6 +107,8 @@ export default function App() {
         {room.id === 'library' && <LibraryScreen save={save} onChange={updateSave} />}
         {room.id === 'shop' && <PlaceholderScreen planned={['キーの購入（付け替えと強化は技術室）']} />}
         {room.id === 'desk' && <DeskScreen save={save} onChange={updateSave} />}
+        {room.id === 'bag' && <InventoryScreen place="bag" save={save} onChange={updateSave} />}
+        {room.id === 'storage' && <InventoryScreen place="storage" save={save} onChange={updateSave} />}
         {room.id === 'mirror' && (
           <PlaceholderScreen
             planned={[

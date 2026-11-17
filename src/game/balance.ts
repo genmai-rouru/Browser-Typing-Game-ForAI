@@ -76,9 +76,9 @@ export const KEY_MAX_LEVEL = 10
 /** キー 1 レベルあたりのダメージ上昇率。 */
 export const KEY_BONUS_PER_LEVEL = 0.1
 
-/** キーを level から 1 つ上げるのに必要な欠片。10, 20, 40, 70, 110 … */
+/** キーを level から 1 つ上げるのに必要なお金（円）。仮。100, 200, 400, 700, 1100 … */
 export function keyUpgradeCost(level: number): number {
-  return 10 + 5 * level * (level + 1)
+  return 100 + 50 * level * (level + 1)
 }
 
 export function keyMultiplier(level: number): number {
@@ -166,11 +166,10 @@ export function skillExpThreshold(level: number): number {
   return 100 * level * (level + 1)
 }
 
-// --- 報酬（お金とアイテムが決まるまでの仮） ---
+/** アイテムを使った直後の防御では、攻撃を予測できないぶん、お題タイマーがこの倍率になります。 */
+export const SURPRISED_TIME_FACTOR = 0.9
+
+// --- 報酬 ---
 export function expReward(damage: number, requestId: number, won: boolean): number {
   return Math.floor(damage / 12) + (won ? requestId * 30 : 0)
-}
-
-export function shardReward(damage: number, requestId: number, firstClear: boolean): number {
-  return Math.floor(damage / 30) + requestId * 8 + (firstClear ? requestId * 20 : 0)
 }
