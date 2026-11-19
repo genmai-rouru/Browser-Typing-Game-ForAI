@@ -1,15 +1,23 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react'
-import { MAX_GENRE_SLOTS, slotIndexOfKey, slotKey } from '../game/balance.ts'
-import { Battle, type BattleEvent, type DefenseResult, type TurnReport } from '../game/battle.ts'
+import './field/field.css'
+import { slotIndexOfKey } from '../game/balance.ts'
+import { Battle, type BattleEvent } from '../game/battle.ts'
 import { requestById } from '../game/enemies.ts'
-import { genreInfo } from '../game/genres.ts'
+import { ITEMS, rarityStars } from '../game/items.ts'
+import { ROLE_NAMES, describeUnique, type PartnerRole } from '../game/partners.ts'
 import type { BattleSummary } from '../game/rewards.ts'
-import { ITEMS, rarityStars, type ItemDef } from '../game/items.ts'
-import { ROLE_NAMES, type PartnerRole } from '../game/partners.ts'
 import { buildLoadout, type SaveData } from '../game/save.ts'
-import type { EnemyAction, GenreId, PromptKind } from '../game/types.ts'
-import { PartnerPortrait } from './PartnerPortrait.tsx'
+import type { GenreId } from '../game/types.ts'
+import { enemyPositions, type Pop } from './field/display.ts'
+import { EnemyView, FatigueBadge, PartyView, StatusBar, TopBar } from './field/Hud.tsx'
+import { InfoWindow, MenuWindow } from './field/MenuWindow.tsx'
+import { PauseMenu } from './field/PauseMenu.tsx'
+import { PromptWindow, TurnReportWindow } from './field/PromptWindow.tsx'
+import { menuInputOf, moveCursor, type MenuEntry, type MenuInfo, type MenuInput } from './field/menu.ts'
 import { ResultDialog } from './ResultDialog.tsx'
+import { IMAGE_PATHS } from './stage/assets.ts'
+import { GameImage } from './stage/GameImage.tsx'
+import { GameStage } from './stage/GameStage.tsx'
 
 interface Props {
   requestId: number
@@ -26,44 +34,108 @@ interface Props {
   onRetry: () => void
 }
 
-/** 敵の上に浮かぶダメージ表示。 */
-interface Pop {
-  id: number
-  text: string
-  tone: 'hit' | 'crit' | 'burst' | 'whiff'
-  x: number
-  y: number
-}
-
 interface Banner {
   id: number
   text: string
   tone: 'info' | 'danger' | 'end'
 }
 
-const KIND_LABEL: Record<PromptKind, string> = {
-  word: '単語',
-  sentence: '一文',
-  short: '短文',
-  long: '長文',
+/** コマンドフェーズのメニューの状態。level が開いているウィンドウです。 */
+interface CommandMenu {
+  level: 'main' | 'skill' | 'item'
+  main: number
+  sub: number
 }
 
-const ACTION_LABEL: Record<EnemyAction['type'], string> = {
-  attack: '通常攻撃',
-  strong: '強攻撃',
-  idle: '非攻撃',
-}
+const MENU_TOP: CommandMenu = { level: 'main', main: 0, sub: 0 }
+
+type MainCommand = 'attack' | 'skill' | 'equip' | 'item'
 
 const reducedMotion = () =>
   typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches
 
-/** 防御フェーズの結果を 1 行の文章にします。 */
-function describeDefense(result: DefenseResult): string {
-  const rate = `${Math.round(result.n * 100)}%`
-  if (result.outcome === 'dodged') return '打ち切って回避した'
-  if (result.outcome === 'forced') return `校正力が尽きて ${result.damage} ダメージ（打ち切り率 ${rate}）`
-  if (result.completed) return `打ち切って致命傷を避けた（${result.damage} ダメージ）`
-  return `${result.damage} ダメージを受けた（打ち切り率 ${rate}）`
+// ---- メニューの中身（戦闘の状態から毎回作ります） ----
+
+interface MenuModel<T> {
+  entries: MenuEntry[]
+  values: T[]
+}
+
+/** サブ一覧（サポートスキル・アイテム）は、隣の説明ウィンドウの中身も持ちます。 */
+interface SubMenuModel<T> extends MenuModel<T> {
+  infos: MenuInfo[]
+}
+
+function mainMenu(battle: Battle): MenuModel<MainCommand> {
+  const hasParty = battle.party.length > 0
+  const items = heldItems(battle)
+  const itemBlocked = battle.skillUsedThisTurn
+  return {
+    values: ['attack', 'skill', 'equip', 'item'],
+    entries: [
+      { id: 'attack', label: '攻撃' },
+      { id: 'skill', label: 'サポートスキル', note: hasParty ? undefined : 'なし', disabled: !hasParty },
+      { id: 'equip', label: '装備', note: '準備中', disabled: true },
+      {
+        id: 'item',
+        label: 'アイテム',
+        // サポートスキルを使ったターンは、アイテムを使えません。
+        note: items.length === 0 ? 'なし' : itemBlocked ? 'このターンは不可' : undefined,
+        disabled: items.length === 0 || itemBlocked,
+      },
+    ],
+  }
+}
+
+function skillMenu(battle: Battle): SubMenuModel<PartnerRole> {
+  const roles: PartnerRole[] = ['front', 'back']
+  const model: SubMenuModel<PartnerRole> = { entries: [], infos: [], values: [] }
+  for (const role of roles) {
+    const member = battle.partyMember(role)
+    model.values.push(role)
+    if (!member) {
+      model.entries.push({ id: role, label: `${ROLE_NAMES[role]}：空き`, disabled: true })
+      model.infos.push({ title: `${ROLE_NAMES[role]}：空き`, lines: ['同行しているパートナーがいません。'] })
+      continue
+    }
+    const ready = battle.canUseSkill(role)
+    model.entries.push({
+      id: role,
+      label: member.def.unique.name,
+      note: member.cooldown > 0 ? `あと${member.cooldown}ターン` : ROLE_NAMES[role],
+      disabled: !ready,
+    })
+    model.infos.push({
+      title: `${member.def.unique.name} Lv.${member.uniqueLv}`,
+      sub: `${ROLE_NAMES[role]}　${member.def.name}`,
+      lines: [describeUnique(member.def, member.uniqueLv), `クールダウン ${member.def.unique.cooldown} ターン`],
+      warn: member.cooldown > 0 ? `あと ${member.cooldown} ターンで使えます` : undefined,
+    })
+  }
+  return model
+}
+
+function itemMenu(battle: Battle): SubMenuModel<string> {
+  const defs = heldItems(battle)
+  return {
+    values: defs.map((d) => d.id),
+    entries: defs.map((d) => ({
+      id: d.id,
+      label: d.name,
+      note: `×${battle.items[d.id]}`,
+      disabled: !battle.canUseItem(d.id),
+    })),
+    infos: defs.map((d) => ({
+      title: d.name,
+      sub: rarityStars(d.rarity),
+      lines: [d.description, `残り ${battle.items[d.id]} 個`, '使うとこのターンは攻撃できず、予告なしで敵の行動に移ります。'],
+    })),
+  }
+}
+
+/** 持ち込んだアイテムのうち、まだ残っているもの（一覧の並び順）。 */
+function heldItems(battle: Battle) {
+  return ITEMS.filter((def) => (battle.items[def.id] ?? 0) > 0)
 }
 
 export function FieldScreen({ requestId, save, summary, onFinish, onRetreat, onLeave, onRetry }: Props) {
@@ -73,14 +145,14 @@ export function FieldScreen({ requestId, save, summary, onFinish, onRetreat, onL
   const [pops, setPops] = useState<Pop[]>([])
   const [banner, setBanner] = useState<Banner | null>(null)
   const [imeWarning, setImeWarning] = useState(false)
-  const [retreatOpen, setRetreatOpen] = useState(false)
+  const [pauseOpen, setPauseOpen] = useState(false)
+  const [pauseCursor, setPauseCursor] = useState(0)
   const [inputLocked, setInputLocked] = useState(false)
-  /** コマンドフェーズで、アイテムの一覧を開いているか。 */
-  const [itemsOpen, setItemsOpen] = useState(false)
+  const [menu, setMenu] = useState<CommandMenu>(MENU_TOP)
 
   const enemyRef = useRef<HTMLDivElement>(null)
-  const cardRef = useRef<HTMLDivElement>(null)
-  const playerRef = useRef<HTMLDivElement>(null)
+  const promptRef = useRef<HTMLDivElement>(null)
+  const statusRef = useRef<HTMLDivElement>(null)
   const nextId = useRef(0)
   const ended = useRef(false)
   const endTimer = useRef<number | undefined>(undefined)
@@ -93,17 +165,18 @@ export function FieldScreen({ requestId, save, summary, onFinish, onRetreat, onL
     setBanner({ id: nextId.current++, text, tone })
   }, [])
 
-  /** 退却の確認ダイアログを開きます。開いている間は戦闘の時間を止めます。 */
-  const openRetreat = useCallback(() => {
+  /** ポーズメニューを開きます。開いている間は戦闘の時間を止めます。 */
+  const openPause = useCallback(() => {
     if (ended.current) return
     battle.pause(performance.now())
-    setRetreatOpen(true)
+    setPauseCursor(0)
+    setPauseOpen(true)
   }, [battle])
 
-  /** 確認ダイアログを閉じて戦闘に戻ります。再開直後は少しの間、入力が無効になります。 */
-  const closeRetreat = useCallback(() => {
+  /** ポーズを解除します。再開直後は少しの間、入力が無効になります。 */
+  const closePause = useCallback(() => {
     battle.resume(performance.now())
-    setRetreatOpen(false)
+    setPauseOpen(false)
   }, [battle])
 
   /** Battle から出来事を受け取り、演出に変換します。 */
@@ -116,8 +189,8 @@ export function FieldScreen({ requestId, save, summary, onFinish, onRetreat, onL
         id: nextId.current++,
         text,
         tone,
-        x: (Math.random() - 0.5) * 220 * spread,
-        y: (Math.random() - 0.5) * 70 * spread,
+        x: (Math.random() - 0.5) * 300 * spread,
+        y: -40 + (Math.random() - 0.5) * 200 * spread,
       })
     }
     const animate = !reducedMotion()
@@ -138,19 +211,19 @@ export function FieldScreen({ requestId, save, summary, onFinish, onRetreat, onL
       switch (event.type) {
         case 'hit':
           pop(String(event.amount), event.crit ? 'crit' : 'hit')
-          shake(enemyRef.current, event.crit ? 7 : 3, 110)
+          shake(enemyRef.current, event.crit ? 10 : 4, 110)
           break
         case 'whiff':
           pop('ミス', 'whiff')
           break
         case 'burst':
           pop(`${event.noMiss ? '完璧' : '追撃'} ${event.amount}`, 'burst', 0.4)
-          shake(enemyRef.current, 10, 260)
+          shake(enemyRef.current, 14, 260)
           break
         case 'miss':
-          shake(cardRef.current, 6, 140)
-          cardRef.current?.classList.add('is-miss')
-          window.setTimeout(() => cardRef.current?.classList.remove('is-miss'), 160)
+          shake(promptRef.current, 8, 140)
+          promptRef.current?.classList.add('is-miss')
+          window.setTimeout(() => promptRef.current?.classList.remove('is-miss'), 160)
           break
         case 'mpShort':
           showBanner('MP が足りません。ジャンルを切り替えてください', 'info')
@@ -159,12 +232,12 @@ export function FieldScreen({ requestId, save, summary, onFinish, onRetreat, onL
           showBanner(`${event.action.name}！`, 'danger')
           break
         case 'playerDamage':
-          if (event.amount > 0) shake(playerRef.current, 8, 220)
+          if (event.amount > 0) shake(statusRef.current, 10, 220)
           showBanner(event.amount === 0 ? '回避！' : `${event.amount} ダメージ`, event.amount === 0 ? 'info' : 'danger')
           break
         case 'partnerSkill':
           pop(`${event.skill} ${event.amount}`, 'burst', 0.4)
-          shake(enemyRef.current, 12, 320)
+          shake(enemyRef.current, 16, 320)
           showBanner(`${event.partner}「${event.skill}」！`, 'info')
           break
         case 'itemUsed':
@@ -202,6 +275,79 @@ export function FieldScreen({ requestId, save, summary, onFinish, onRetreat, onL
 
   useEffect(() => () => window.clearTimeout(endTimer.current), [])
 
+  // ---- コマンドフェーズのメニュー操作 ----
+
+  const pickMain = useCallback(
+    (index: number) => {
+      const model = mainMenu(battle)
+      const entry = model.entries[index]
+      if (!entry || entry.disabled) return
+      const command = model.values[index]
+      if (command === 'attack') {
+        if (battle.proceed(performance.now())) setMenu(MENU_TOP)
+      } else if (command === 'skill') {
+        setMenu({ level: 'skill', main: index, sub: 0 })
+      } else if (command === 'item') {
+        setMenu({ level: 'item', main: index, sub: 0 })
+      }
+    },
+    [battle],
+  )
+
+  const pickSub = useCallback(
+    (level: CommandMenu['level'], index: number) => {
+      const now = performance.now()
+      if (level === 'skill') {
+        const model = skillMenu(battle)
+        if (model.entries[index]?.disabled) return
+        if (battle.useSkill(model.values[index], now)) setMenu(MENU_TOP)
+      } else if (level === 'item') {
+        const model = itemMenu(battle)
+        if (model.entries[index]?.disabled) return
+        if (battle.useItem(model.values[index], now)) setMenu(MENU_TOP)
+      }
+      handleEvents()
+      rerender()
+    },
+    [battle, handleEvents],
+  )
+
+  const handleMenuInput = useCallback(
+    (input: MenuInput) => {
+      if (menu.level === 'main') {
+        const length = mainMenu(battle).entries.length
+        if (input === 'up' || input === 'down') {
+          setMenu({ ...menu, main: moveCursor(menu.main, input === 'up' ? -1 : 1, length) })
+        } else if (input === 'confirm') {
+          pickMain(menu.main)
+        } else if (input === 'escape') {
+          openPause()
+        }
+        // いちばん上のメニューでは X は何もしません。
+        return
+      }
+      const length = (menu.level === 'skill' ? skillMenu(battle) : itemMenu(battle)).entries.length
+      if (input === 'up' || input === 'down') {
+        setMenu({ ...menu, sub: moveCursor(menu.sub, input === 'up' ? -1 : 1, length) })
+      } else if (input === 'confirm') {
+        pickSub(menu.level, menu.sub)
+      } else {
+        setMenu({ ...menu, level: 'main' })
+      }
+    },
+    [battle, menu, pickMain, pickSub, openPause],
+  )
+
+  // ---- ポーズメニュー ----
+
+  const pickPause = useCallback(
+    (index: number) => {
+      if (index === 0) closePause()
+      else onRetreat(battle)
+    },
+    [battle, closePause, onRetreat],
+  )
+
   // キー入力。
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -211,47 +357,50 @@ export function FieldScreen({ requestId, save, summary, onFinish, onRetreat, onL
         return
       }
       if (e.ctrlKey || e.metaKey || e.altKey) return
-      const now = performance.now()
+      // 決着後は、結果ダイアログが自分でキーを受け取ります。
+      if (ended.current) return
+      const input = menuInputOf(e.key)
 
-      const listOpen = itemsOpen && battle.phase === 'command'
-      if (e.key === 'Escape') {
+      if (pauseOpen) {
+        if (e.key === 'Tab') e.preventDefault()
+        if (!input) return
         e.preventDefault()
-        if (retreatOpen) closeRetreat()
-        else if (listOpen) setItemsOpen(false)
-        else openRetreat()
+        if (e.repeat && input === 'confirm') return
+        if (input === 'up' || input === 'down') setPauseCursor((c) => moveCursor(c, input === 'up' ? -1 : 1, 2))
+        else if (input === 'confirm') pickPause(pauseCursor)
+        else closePause()
         return
       }
-      // 確認ダイアログや結果ダイアログが出ている間は、戦闘の操作を受け付けません。
-      if (retreatOpen || ended.current) return
 
-      if (e.key === 'Tab' || e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+      if (battle.phase === 'command') {
+        if (e.key === 'Tab') e.preventDefault()
+        if (!input) return
+        e.preventDefault()
+        if (e.repeat && input === 'confirm') return
+        setImeWarning(false)
+        handleMenuInput(input)
+        return
+      }
+
+      // ---- 攻撃・防御フェーズ ----
+      const now = performance.now()
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        openPause()
+        return
+      }
+      if (battle.phase === 'attack' && (e.key === 'Tab' || e.key === 'ArrowRight' || e.key === 'ArrowLeft')) {
         e.preventDefault()
         const back = e.key === 'ArrowLeft' || (e.key === 'Tab' && e.shiftKey)
         battle.cycleGenre(back ? -1 : 1)
-      } else if (e.key === 'Enter' || e.key === ' ') {
-        e.preventDefault()
-        if (e.repeat) return
-        battle.proceed(now)
-      } else if (listOpen && slotIndexOfKey(e.key) >= 0) {
-        // アイテムの一覧を開いている間は、数字キーでアイテムを選びます。
-        e.preventDefault()
-        if (e.repeat) return
-        const item = heldItems(battle)[slotIndexOfKey(e.key)]
-        if (item && battle.useItem(item.id, now)) setItemsOpen(false)
-      } else if (battle.phase === 'command' && e.key.toLowerCase() === 'i') {
-        e.preventDefault()
-        if (e.repeat) return
-        setItemsOpen((open) => !open)
-      } else if (slotIndexOfKey(e.key) >= 0) {
-        e.preventDefault()
+      } else if (battle.phase === 'attack' && slotIndexOfKey(e.key) >= 0) {
         // 数字キーは、セットの並び順（1〜9 が 1〜9 枠目、0 が 10 枠目）に対応します。
+        e.preventDefault()
         const genre = battle.genres[slotIndexOfKey(e.key)]
         if (genre) battle.switchGenre(genre)
-      } else if (battle.phase === 'command' && SKILL_KEYS[e.key.toLowerCase()]) {
-        // コマンドフェーズでは F で前衛、J で後衛の固有スキルを使います。
+      } else if (e.key === 'Enter' || e.key === ' ' || e.key === 'Tab') {
         e.preventDefault()
-        if (e.repeat) return
-        battle.useSkill(SKILL_KEYS[e.key.toLowerCase()], now)
+        return
       } else if (e.key.length === 1) {
         e.preventDefault()
         if (e.repeat) return
@@ -265,438 +414,123 @@ export function FieldScreen({ requestId, save, summary, onFinish, onRetreat, onL
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [battle, handleEvents, retreatOpen, openRetreat, closeRetreat, itemsOpen])
+  }, [battle, handleEvents, handleMenuInput, pauseOpen, pauseCursor, pickPause, openPause, closePause])
 
   const switchTo = (genre: GenreId) => {
     battle.switchGenre(genre)
     rerender()
   }
 
-  const proceed = () => {
-    battle.proceed(performance.now())
-    setItemsOpen(false)
-    rerender()
-  }
-
-  const triggerItem = (id: string) => {
-    if (battle.useItem(id, performance.now())) setItemsOpen(false)
-    handleEvents()
-    rerender()
-  }
-
-  const triggerSkill = (role: PartnerRole) => {
-    battle.useSkill(role, performance.now())
-    handleEvents()
-    rerender()
-  }
-
-  // ---- 表示用の値 ----
-  const { enemy, prompt, player, phase, report } = battle
+  // ---- 表示 ----
+  const { enemy, phase } = battle
   const defending = phase === 'defense' || phase === 'defenseIntro'
-  const typing = phase === 'attack' || defending
-  const seconds = battle.timeLeftMs / 1000
-  const timeRatio = battle.timeLimitMs > 0 ? battle.timeLeftMs / battle.timeLimitMs : 0
-  const forecast = battle.forecast
-  const fatigue = battle.fatigue
-  const canSwitch = (phase === 'attack' || phase === 'command') && !battle.outOfMp
-  const urgent = (phase === 'attack' && seconds <= 5) || phase === 'defense'
+  const commanding = phase === 'command' && !battle.ended
+  const main = mainMenu(battle)
+  const sub = menu.level === 'skill' ? skillMenu(battle) : menu.level === 'item' ? itemMenu(battle) : null
+  const subCursor = sub ? Math.min(menu.sub, Math.max(0, sub.entries.length - 1)) : 0
+  const info = sub ? sub.infos[subCursor] : null
+  const [enemyX] = enemyPositions(1)
 
   return (
-    <main className={`battle phase-${phase}`}>
-      <header className="battle-head">
-        <div className="battle-stage">
-          <span className="stage-no">{battle.request.title}</span>
-          <span className="battle-progress">
-            ウェーブ {battle.waveIndex + 1}/{battle.waveCount}　ターン {Math.max(1, battle.turn)}
-          </span>
-        </div>
-        <div className={`timer ${urgent ? 'is-urgent' : ''}`} aria-label="残り時間">
-          {typing ? (
-            <>
-              <span className="timer-label">{defending ? 'お題タイマー' : '攻撃'}</span>
-              <span className="timer-num">{phase === 'defenseIntro' ? '--.-' : seconds.toFixed(1)}</span>
-              <span className="timer-unit">秒</span>
-            </>
-          ) : (
-            <span className="timer-label">コマンド</span>
-          )}
-        </div>
-        <button type="button" className="ghost-button" onClick={openRetreat}>
-          <kbd>Esc</kbd> 退却
-        </button>
-      </header>
-      <div className="timer-bar" aria-hidden="true">
-        <div
-          className={`timer-bar-fill ${urgent ? 'is-urgent' : ''}`}
-          style={{ transform: `scaleX(${phase === 'defenseIntro' ? 1 : typing ? timeRatio : 0})` }}
-        />
+    <GameStage className={`bt phase-${phase} ${defending && battle.defense?.strong ? 'is-strong' : ''}`}>
+      <div className="bt-bg">
+        <GameImage path={IMAGE_PATHS.background('field')} className="bt-bg-img" fallback={<div className="bt-bg-fallback" />} />
       </div>
 
-      <section className="enemy-area">
-        <div className="enemy-stage">
-          <div
-            ref={enemyRef}
-            className={`enemy-seal ${enemy.boss ? 'is-boss' : ''} ${phase === 'won' ? 'is-defeated' : ''}`}
-          >
-            <span>{enemy.glyph}</span>
-          </div>
-          <div className="pops" aria-hidden="true">
-            {pops.map((p) => (
-              <span
-                key={p.id}
-                className={`pop pop-${p.tone}`}
-                style={{ left: `calc(50% + ${p.x}px)`, top: `calc(42% + ${p.y}px)` }}
-                onAnimationEnd={() => setPops((list) => list.filter((q) => q.id !== p.id))}
-              >
-                {p.text}
-              </span>
-            ))}
-          </div>
-          {banner && (
-            <div key={banner.id} className={`banner banner-${banner.tone}`} role="status">
-              {banner.text}
-            </div>
+      <TopBar
+        wave={battle.waveIndex + 1}
+        waveCount={battle.waveCount}
+        // コマンドフェーズは、これから始まるターンの一部として数えます。
+        turn={phase === 'command' ? battle.turn + 1 : Math.max(1, battle.turn)}
+        onPause={openPause}
+      />
+
+      <EnemyView
+        enemy={enemy}
+        hpRatio={battle.enemyHp / enemy.hp}
+        forecast={battle.forecast}
+        defeated={phase === 'won'}
+        x={enemyX}
+        pops={pops}
+        onPopEnd={(id) => setPops((list) => list.filter((q) => q.id !== id))}
+        artRef={enemyRef}
+      />
+
+      <PartyView party={battle.party} />
+
+      {commanding && (
+        <>
+          <MenuWindow
+            title="コマンド"
+            className="bt-command"
+            entries={main.entries}
+            cursor={menu.main}
+            active={menu.level === 'main'}
+            onHover={(index) => menu.level === 'main' && setMenu({ ...menu, main: index })}
+            onPick={(index) => {
+              setMenu((m) => ({ ...m, main: index }))
+              pickMain(index)
+            }}
+          />
+          {sub && (
+            <MenuWindow
+              title={menu.level === 'skill' ? 'サポートスキル' : 'アイテム'}
+              className="bt-sublist"
+              entries={sub.entries}
+              cursor={subCursor}
+              active
+              onHover={(index) => setMenu({ ...menu, sub: index })}
+              onPick={(index) => pickSub(menu.level, index)}
+            />
           )}
-        </div>
-        <div className="enemy-info">
-          <h1 className="enemy-name">
-            {enemy.name}
-            {enemy.boss && <span className="boss-tag">BOSS</span>}
-          </h1>
-          <div className="hp">
-            <div className="hp-bar">
-              <div className="hp-fill" style={{ transform: `scaleX(${battle.enemyHp / enemy.hp})` }} />
-            </div>
-            <div className="hp-num">
-              {battle.enemyHp.toLocaleString()} <span>/ {enemy.hp.toLocaleString()}</span>
-            </div>
-          </div>
-          <div className="forecast-row">
-            {forecast ? (
-              <span className={`forecast is-${forecast.type}`}>
-                {defending ? '行動' : '予告'} <b>{ACTION_LABEL[forecast.type]}</b>「{forecast.name}」
-              </span>
-            ) : (
-              <span className="forecast is-hidden">残り 2 秒で次の行動を予告</span>
-            )}
-          </div>
-        </div>
-      </section>
-
-      <section ref={playerRef} className="player-bars" aria-label="リーダーの状態">
-        <Gauge label="HP" tone="hp" value={battle.hp} max={player.maxHp} />
-        <Gauge label="MP" tone="mp" value={battle.mp} max={player.maxMp} />
-        <Gauge label="校正力" tone="prr" value={battle.prr} max={player.prr} />
-        {fatigue > 0 && <span className="fatigue-chip">疲労 {fatigue}</span>}
-      </section>
-
-      {battle.party.length > 0 && (
-        <section className="party-strip" aria-label="同行しているパートナー">
-          {battle.party.map((m) => (
-            <div key={m.def.id} className="party-chip">
-              <PartnerPortrait partner={m.def} size="small" />
-              <span className="party-chip-body">
-                <span className="party-chip-name">{m.def.name}</span>
-                <span className={`party-chip-cd ${m.cooldown <= 0 ? 'is-ready' : ''}`}>
-                  {m.def.unique.name}：{m.cooldown <= 0 ? '使用可' : `あと ${m.cooldown} ターン`}
-                </span>
-              </span>
-            </div>
-          ))}
-        </section>
+          {info && <InfoWindow info={info} className="bt-info-pos" />}
+          <TurnReportWindow report={battle.report} enemyName={enemy.name} />
+        </>
       )}
 
-      <nav className="genre-tabs" aria-label="お題のジャンル">
-        {Array.from({ length: MAX_GENRE_SLOTS }, (_, index) => {
-          const id = battle.genres[index]
-          if (!id) {
-            return (
-              <span key={`empty-${index}`} className="genre-tab is-empty">
-                <kbd>{slotKey(index)}</kbd>
-                <span className="genre-tab-name">空き</span>
-              </span>
-            )
-          }
-          const g = genreInfo(id)
-          return (
-            <button
-              key={id}
-              type="button"
-              className={`genre-tab genre-${id} ${battle.genre === id && !battle.outOfMp ? 'is-active' : ''}`}
-              onClick={() => switchTo(id)}
-              disabled={!canSwitch || !battle.canUseGenre(id)}
-              tabIndex={-1}
-            >
-              <kbd>{slotKey(index)}</kbd>
-              <span className="genre-tab-name">{g.name}</span>
-              <span className="genre-tab-lv">MP {battle.mpCost(id)}</span>
-            </button>
-          )
-        })}
-        <span className="genre-hint">
-          <kbd>Tab</kbd> / 数字キー 1〜0 で切替（次のお題から）
-        </span>
-      </nav>
+      <PromptWindow battle={battle} onSwitchGenre={switchTo} windowRef={promptRef} />
 
-      <section
-        ref={cardRef}
-        className={`prompt-card ${prompt && prompt.genre !== 'basic' ? `genre-${prompt.genre}` : ''} ${defending ? 'is-defense' : ''}`}
-      >
-        {prompt ? (
-          <>
-            <div className="prompt-meta">
-              <span className="prompt-kind">
-                {defending ? (battle.defense?.strong ? '防御（強攻撃）' : '防御') : KIND_LABEL[prompt.kind]}
-              </span>
-              <span className="prompt-genre">
-                {prompt.genre === 'basic' ? '通常攻撃（MP 0）' : genreInfo(prompt.genre).name}
-              </span>
-              {defending && (
-                <span className="prompt-note">打ち切り率 {Math.round(battle.defenseProgress * 100)}%</span>
-              )}
-              {defending && battle.defense?.surprised && (
-                <span className="prompt-note is-warn">予測できず、お題タイマー −10%</span>
-              )}
-              {battle.blocked && <span className="prompt-note is-warn">MP 不足：ジャンルを切り替えてください</span>}
-            </div>
-            <p className={`prompt-text kind-${prompt.kind}`}>{prompt.entry.text}</p>
-            <p className="prompt-kana" aria-hidden="true">
-              <span className="done">{prompt.session.kana.slice(0, prompt.session.kanaPosition)}</span>
-              <span>{prompt.session.kana.slice(prompt.session.kanaPosition)}</span>
-            </p>
-            <PromptGuide typed={prompt.session.guide().typed} rest={prompt.session.guide().rest} />
-          </>
-        ) : (
-          <CommandPanel
-            report={report}
-            ended={battle.ended}
-            nextEnemy={enemy.name}
-            onProceed={proceed}
-            skills={battle.party.map((m) => ({
-              role: m.def.role,
-              partner: m.def.name,
-              name: m.def.unique.name,
-              cooldown: m.cooldown,
-              ready: battle.canUseSkill(m.def.role),
-            }))}
-            onSkill={triggerSkill}
-            items={heldItems(battle).map((def) => ({ def, count: battle.items[def.id] }))}
-            itemsOpen={itemsOpen}
-            itemsBlocked={battle.skillUsedThisTurn}
-            onToggleItems={() => setItemsOpen((open) => !open)}
-            onItem={triggerItem}
-          />
-        )}
-      </section>
+      <FatigueBadge stacks={battle.fatigue} />
+      <StatusBar
+        hp={battle.hp}
+        maxHp={battle.player.maxHp}
+        mp={battle.mp}
+        maxMp={battle.player.maxMp}
+        atk={battle.player.atk}
+        def={battle.player.def}
+        prr={battle.prr}
+        maxPrr={battle.player.prr}
+        barRef={statusRef}
+      />
 
-      <footer className="battle-foot">
-        <div className="next">
-          <span className="label">NEXT</span>
-          <span className="next-text">
-            {battle.outOfMp ? (
-              '通常攻撃'
-            ) : (
-              <>
-                <span className={`mini-chip genre-${battle.next.genre}`}>{genreInfo(battle.next.genre).name}</span>{' '}
-                {battle.next.entry.text}
-              </>
-            )}
-          </span>
+      {banner && !summary && (
+        <div key={banner.id} className={`bt-banner is-${banner.tone}`} role="status">
+          {banner.text}
         </div>
-      </footer>
+      )}
 
-      {inputLocked && !retreatOpen && (
-        <div className="resume-lock" role="status">
+      {inputLocked && !pauseOpen && (
+        <div className="bt-resume-lock" role="status">
           再開中…
         </div>
       )}
 
-      {retreatOpen && (
-        <div className="dialog-backdrop">
-          <div className="dialog small" role="dialog" aria-modal="true" aria-labelledby="retreat-title">
-            <h2 id="retreat-title" className="screen-title">
-              退却しますか？
-            </h2>
-            <p className="dialog-body">退却すると、この戦闘の報酬は手に入りません。使ったアイテムは戻りません。</p>
-            <div className="dialog-actions">
-              <button type="button" className="primary-button" autoFocus onClick={closeRetreat}>
-                戦闘に戻る <kbd>Esc</kbd>
-              </button>
-              <button type="button" className="ghost-button" onClick={() => onRetreat(battle)}>
-                退却する
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {summary && <ResultDialog summary={summary} money={save.money} onRetry={onRetry} onLeave={onLeave} />}
-
       {imeWarning && (
-        <div className="ime-warning" role="alert">
+        <div className="bt-ime-warning" role="alert">
           日本語入力（IME）がオンになっています。半角英数に切り替えてください。
         </div>
       )}
-    </main>
-  )
-}
 
-function Gauge({ label, tone, value, max }: { label: string; tone: string; value: number; max: number }) {
-  return (
-    <div className={`gauge-row gauge-${tone}`}>
-      <span className="gauge-label">{label}</span>
-      <div className="gauge-track">
-        <div className="gauge-fill" style={{ transform: `scaleX(${max > 0 ? value / max : 0})` }} />
-      </div>
-      <span className="gauge-num">
-        {value}
-        <span> / {max}</span>
-      </span>
-    </div>
-  )
-}
-
-function PromptGuide({ typed, rest }: { typed: string; rest: string }) {
-  return (
-    <p className="prompt-romaji" aria-label="ローマ字ガイド">
-      <span className="done">{typed}</span>
-      <span className="cursor">{rest.slice(0, 1)}</span>
-      <span>{rest.slice(1)}</span>
-    </p>
-  )
-}
-
-/** コマンドフェーズ。直前の経過（簡易リザルト）を表示し、次のターンへ進みます。 */
-/** 持ち込んだアイテムのうち、まだ残っているもの（一覧の並び順）。 */
-function heldItems(battle: Battle): ItemDef[] {
-  return ITEMS.filter((def) => (battle.items[def.id] ?? 0) > 0)
-}
-
-interface SkillButton {
-  role: PartnerRole
-  partner: string
-  name: string
-  cooldown: number
-  ready: boolean
-}
-
-const SKILL_KEYS: Readonly<Record<string, PartnerRole>> = { f: 'front', j: 'back' }
-const SKILL_KEY_LABEL: Readonly<Record<PartnerRole, string>> = { front: 'F', back: 'J' }
-
-function CommandPanel({
-  report,
-  ended,
-  nextEnemy,
-  onProceed,
-  skills,
-  onSkill,
-  items,
-  itemsOpen,
-  itemsBlocked,
-  onToggleItems,
-  onItem,
-}: {
-  report: TurnReport
-  ended: boolean
-  nextEnemy: string
-  onProceed: () => void
-  skills: SkillButton[]
-  onSkill: (role: PartnerRole) => void
-  items: Array<{ def: ItemDef; count: number }>
-  itemsOpen: boolean
-  /** このターンに固有スキルを使ったため、アイテムを使えない状態か。 */
-  itemsBlocked: boolean
-  onToggleItems: () => void
-  onItem: (id: string) => void
-}) {
-  if (ended) return <div className="command" />
-  const title =
-    report.kind === 'start'
-      ? `${nextEnemy}が現れた`
-      : report.kind === 'waveClear'
-        ? `${report.defeated}を倒した。${nextEnemy}が現れた`
-        : `ターン ${report.turn} の経過`
-  return (
-    <div className="command">
-      <h2 className="command-title">{title}</h2>
-      {report.kind !== 'start' && (
-        <dl className="command-stats">
-          <div>
-            <dt>与ダメージ</dt>
-            <dd>{report.damage.toLocaleString()}</dd>
-          </div>
-          <div>
-            <dt>打鍵数</dt>
-            <dd>{report.strokes}</dd>
-          </div>
-          <div>
-            <dt>ミス</dt>
-            <dd>{report.misses}</dd>
-          </div>
-        </dl>
+      {pauseOpen && (
+        <PauseMenu
+          title={battle.request.title}
+          cursor={pauseCursor}
+          onHover={setPauseCursor}
+          onPick={pickPause}
+        />
       )}
-      {report.usedItem && <p className="command-line">アイテム「{report.usedItem}」を使った</p>}
-      {report.action && (
-        <p className="command-line">
-          敵の行動：<b>{ACTION_LABEL[report.action.type]}</b>「{report.action.name}」
-          {report.defense ? ` → ${describeDefense(report.defense)}` : ''}
-        </p>
-      )}
-      {report.fatigueDamage > 0 && <p className="command-line">疲労で {report.fatigueDamage} ダメージを受けた</p>}
-      {report.heal > 0 && <p className="command-line">パートナーのパッシブで HP が {report.heal} 回復した</p>}
-      {skills.length > 0 && (
-        <div className="command-skills">
-          {skills.map((s) => (
-            <button
-              key={s.role}
-              type="button"
-              className="ghost-button"
-              disabled={!s.ready}
-              onClick={() => onSkill(s.role)}
-              title={`${ROLE_NAMES[s.role]}：${s.partner}`}
-            >
-              {s.name}
-              {s.ready ? <kbd>{SKILL_KEY_LABEL[s.role]}</kbd> : <span className="cd-note">あと {s.cooldown} ターン</span>}
-            </button>
-          ))}
-        </div>
-      )}
-      <div className="command-items">
-        <button
-          type="button"
-          className="ghost-button"
-          disabled={items.length === 0 || itemsBlocked}
-          aria-expanded={itemsOpen}
-          onClick={onToggleItems}
-        >
-          アイテム <kbd>I</kbd>
-        </button>
-        <span className="cd-note">
-          {itemsBlocked
-            ? '固有スキルを使ったターンは、アイテムを使えません'
-            : items.length === 0
-              ? 'かばんに使えるアイテムがありません'
-              : '使うと攻撃せずに、敵の行動へ移ります'}
-        </span>
-      </div>
-      {itemsOpen && !itemsBlocked && items.length > 0 && (
-        <ol className="command-item-list">
-          {items.map(({ def, count }, index) => (
-            <li key={def.id}>
-              <button type="button" className="command-item" onClick={() => onItem(def.id)}>
-                {index < MAX_GENRE_SLOTS && <kbd>{slotKey(index)}</kbd>}
-                <span className="item-rarity">{rarityStars(def.rarity)}</span>
-                <span className="item-name">{def.name}</span>
-                <span className="item-desc">{def.description}</span>
-                <span className="item-count">×{count}</span>
-              </button>
-            </li>
-          ))}
-        </ol>
-      )}
-      <button type="button" className="primary-button" onClick={onProceed}>
-        {report.kind === 'start' ? '戦闘開始' : '次のターンへ'} <kbd>Space</kbd>
-      </button>
-    </div>
+
+      {summary && <ResultDialog summary={summary} money={save.money} onRetry={onRetry} onLeave={onLeave} />}
+    </GameStage>
   )
 }

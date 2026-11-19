@@ -74,19 +74,18 @@ export default function App() {
   }
 
   if (field) {
+    // 運動場は 16:9 の固定画面（GameStage）で、ウィンドウ全体を使います。
     return (
-      <div className="app">
-        <FieldScreen
-          key={field.run}
-          requestId={field.requestId}
-          save={save}
-          summary={field.summary}
-          onFinish={finishBattle}
-          onRetreat={retreat}
-          onLeave={leaveField}
-          onRetry={() => startBattle(field.requestId)}
-        />
-      </div>
+      <FieldScreen
+        key={field.run}
+        requestId={field.requestId}
+        save={save}
+        summary={field.summary}
+        onFinish={finishBattle}
+        onRetreat={retreat}
+        onLeave={leaveField}
+        onRetry={() => startBattle(field.requestId)}
+      />
     )
   }
 

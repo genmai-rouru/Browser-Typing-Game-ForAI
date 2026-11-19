@@ -236,6 +236,8 @@ export class Battle {
   private readonly findEnemy: (id: string) => EnemyDef
   private lastNow: number | null = null
   private pausedFlag = false
+  /** 攻撃フェーズのタイマーが動き出したか（最初の正しい打鍵で動き出します）。 */
+  private attackRunning = false
   private inputLockedUntil = 0
   /** 予告した時点で確定した、このターンの敵の行動。 */
   private lockedAction: EnemyAction | null = null
@@ -344,6 +346,14 @@ export class Battle {
     return this.defense && this.prompt ? this.prompt.session.progress() : 0
   }
 
+  /**
+   * 攻撃フェーズで、お題はセット済みだがタイマーがまだ動いていない状態か。
+   * 最初の正しい打鍵でタイマーが動き出します。
+   */
+  get waitingStart(): boolean {
+    return this.phase === 'attack' && !this.attackRunning
+  }
+
   isInputLocked(now: number): boolean {
     return !this.ended && now < this.inputLockedUntil
   }
@@ -368,6 +378,8 @@ export class Battle {
     if (dt === 0) return
 
     if (this.phase === 'attack') {
+      // タイマーが動き出すまでは、時間も疲労も進みません。
+      if (!this.attackRunning) return
       this.countActive(dt)
       if (this.applyFatigue(dt)) return
       this.timeLeftMs = Math.max(0, this.timeLeftMs - dt)
@@ -408,13 +420,17 @@ export class Battle {
 
   // ---- プレイヤーの操作 ----
 
-  /** コマンドフェーズを終えて、攻撃フェーズを始めます。 */
+  /**
+   * コマンドフェーズを終えて、攻撃フェーズに入ります。
+   * お題をセットするだけで、タイマーは最初の正しい打鍵で動き出します。
+   */
   proceed(now: number): boolean {
     if (this.phase !== 'command' || this.pausedFlag) return false
     this.tick(now)
     this.turn++
     this.stats.turns++
     this.phase = 'attack'
+    this.attackRunning = false
     this.timeLeftMs = this.timeLimitMs = this.attackTimeMs
     this.lockedAction = null
     this.turnDamage = this.turnStrokes = this.turnMisses = this.turnFatigue = 0
@@ -513,8 +529,9 @@ export class Battle {
     if (this.phase !== 'attack' && this.phase !== 'command') return false
     if (this.pausedFlag || genre === this.genre) return false
     if (!this.genres.includes(genre) || !this.canUseGenre(genre)) return false
-    // 入力中のお題が MP 不足で打てないときだけは、先へ進めるようにその場で置き換えます。
-    const replaceNow = this.blocked
+    // 入力中のお題が MP 不足で打てないときと、タイマーが動き出す前（まだ 1 文字も
+    // 正しく打っていないとき）は、その場でお題を置き換えます。
+    const replaceNow = this.blocked || this.waitingStart
     this.genre = genre
     this.next = this.rollAttack()
     if (replaceNow) {
@@ -552,6 +569,7 @@ export class Battle {
 
     const result = prompt.session.input(key)
     prompt.started = true
+    if (result.ok) this.attackRunning = true
     if (!result.ok) {
       this.countMiss()
       prompt.missed = true

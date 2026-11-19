@@ -25,6 +25,13 @@ import { applyBattle, applyRetreat } from './rewards.ts'
 import { buildLoadout, createSave, loadSave } from './save.ts'
 import type { EnemyAction, EnemyDef, RequestDef } from './types.ts'
 
+/** 攻撃フェーズに入り、最初の正しい打鍵でタイマーを動かします。 */
+function begin(battle: Battle, now: number): void {
+  battle.proceed(now)
+  if (battle.prompt) battle.type(battle.prompt.session.guide().rest[0], now)
+  battle.drainEvents()
+}
+
 const IDLE: EnemyAction = { type: 'idle', name: '様子見' }
 const ATTACK: EnemyAction = { type: 'attack', name: '攻撃', power: 1 }
 
@@ -223,7 +230,7 @@ describe('戦闘でのアイテム使用', () => {
 
   it('攻撃フェーズのあとの防御は、お題タイマーが短くならない', () => {
     const { battle: b } = setup([enemy('a', 1e9, [ATTACK])])
-    b.proceed(0)
+    begin(b, 0)
     b.tick(ATTACK_TIME_MS)
     b.tick(ATTACK_TIME_MS + DEFENSE_INTRO_MS)
     expect(b.defense!.surprised).toBe(false)
@@ -233,7 +240,7 @@ describe('戦闘でのアイテム使用', () => {
   it('持っていないアイテムや、攻撃フェーズ中は使えない', () => {
     const { battle: b } = setup([enemy('a', 1e9, [IDLE])])
     expect(b.useItem('bento', 0)).toBe(false)
-    b.proceed(0)
+    begin(b, 0)
     expect(b.useItem('pan', 10)).toBe(false)
     expect(b.items.pan).toBe(2)
   })
@@ -256,7 +263,7 @@ describe('戦闘でのアイテム使用', () => {
     expect(b.partyMember('front')!.cooldown).toBe(2)
     let now = 0
     for (let i = 0; i < 2; i++) {
-      b.proceed(now)
+      begin(b, now)
       now += ATTACK_TIME_MS
       b.tick(now)
     }
@@ -264,7 +271,7 @@ describe('戦闘でのアイテム使用', () => {
     expect(b.canUseItem('pan')).toBe(false)
     expect(b.useItem('pan', now)).toBe(false)
     // 次のターンになれば使える。
-    b.proceed(now)
+    begin(b, now)
     b.tick(now + ATTACK_TIME_MS)
     expect(b.canUseItem('pan')).toBe(true)
   })
@@ -281,7 +288,7 @@ describe('戦闘でのアイテム使用', () => {
 
 describe('報酬（お金とアイテム）', () => {
   const win = (b: Battle) => {
-    b.proceed(0)
+    begin(b, 0)
     while (!b.ended) b.type(b.prompt!.session.guide().rest[0], 10)
   }
   const rewards: RequestDef['rewards'] = {
@@ -328,7 +335,7 @@ describe('報酬（お金とアイテム）', () => {
   it('敗北時は、倒した敵のドロップも報酬も受け取れない。使ったアイテムは減る', () => {
     const strong: EnemyAction = { type: 'strong', name: '強攻撃', power: 10 }
     const { battle: b, find } = setup([dropper(), enemy('b', 1e9, [strong])], {}, rewards)
-    b.proceed(0)
+    begin(b, 0)
     while (b.waveIndex === 0) b.type(b.prompt!.session.guide().rest[0], 10)
     b.useItem('pan', 20)
     b.tick(20 + DEFENSE_INTRO_MS)

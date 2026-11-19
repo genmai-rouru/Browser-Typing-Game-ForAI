@@ -15,6 +15,13 @@ import { applyBattle } from './rewards.ts'
 import { buildLoadout, createSave, loadSave, setPartyMember, storeSave } from './save.ts'
 import type { EnemyAction, EnemyDef, RequestDef } from './types.ts'
 
+/** 攻撃フェーズに入り、最初の正しい打鍵でタイマーを動かします。 */
+function begin(battle: Battle, now: number): void {
+  battle.proceed(now)
+  if (battle.prompt) battle.type(battle.prompt.session.guide().rest[0], now)
+  battle.drainEvents()
+}
+
 const KONOMI = partnerById('konomi')!
 const IDLE: EnemyAction = { type: 'idle', name: '様子見' }
 const STRONG: EnemyAction = { type: 'strong', name: '強攻撃', power: 1 }
@@ -37,9 +44,9 @@ function setup(enemies: EnemyDef[], party: Loadout['party'] = [{ def: KONOMI, pa
   return battle
 }
 
-/** 何もせずにターンを 1 つ終えます（敵は非攻撃の想定）。 */
+/** 1 打鍵だけしてターンを 1 つ終えます（敵は非攻撃の想定）。 */
 function passTurn(battle: Battle, now: number): number {
-  battle.proceed(now)
+  begin(battle, now)
   battle.tick(now + ATTACK_TIME_MS)
   return now + ATTACK_TIME_MS
 }
@@ -84,16 +91,17 @@ describe('固有スキル', () => {
     let now = 0
     for (let turn = 1; turn <= 3; turn++) now = passTurn(b, now)
     b.drainEvents()
+    const before = b.enemyHp
     b.useSkill('front', now)
     expect(b.drainEvents()).toContainEqual({ type: 'partnerSkill', partner: KONOMI.name, skill: 'スイーツトルネード', amount: 3600 })
-    expect(b.enemyHp).toBe(1e9 - 3600)
+    expect(b.enemyHp).toBe(before - 3600)
   })
 
   it('攻撃フェーズ中は使えない', () => {
     const b = setup([enemy('a', 1e9, [IDLE])])
     let now = 0
     for (let turn = 1; turn <= 3; turn++) now = passTurn(b, now)
-    b.proceed(now)
+    begin(b, now)
     expect(b.useSkill('front', now)).toBe(false)
   })
 
@@ -105,7 +113,8 @@ describe('固有スキル', () => {
     b.useSkill('front', now)
     expect(b.waveIndex).toBe(1)
     expect(b.phase).toBe('command')
-    expect(b.report).toMatchObject({ kind: 'waveClear', damage: 100, strokes: 0 })
+    // 各ターンの最初の 1 打鍵（10 ダメージ × 3 ターン）で 30 減っているので、スキルは残りの 70。
+    expect(b.report).toMatchObject({ kind: 'waveClear', damage: 70, strokes: 0 })
     expect(b.partyMember('front')!.cooldown).toBe(3) // 減らない
     expect(b.hp).toBe(50) // 回復もしない
     now = passTurn(b, now)
@@ -124,7 +133,7 @@ describe('固有スキル', () => {
 describe('パッシブスキル', () => {
   it('ターンが終わってコマンドフェーズに入るとき、最大 HP の割合だけ回復する', () => {
     const b = setup([enemy('a', 1e9, [STRONG], { attack: 30 })], [{ def: KONOMI, passiveLv: 10, uniqueLv: 0 }])
-    b.proceed(0)
+    begin(b, 0)
     b.tick(ATTACK_TIME_MS)
     b.tick(ATTACK_TIME_MS + 1000)
     b.tick(ATTACK_TIME_MS + 1000 + b.timeLimitMs + 1)
@@ -143,7 +152,7 @@ describe('パッシブスキル', () => {
   it('攻撃フェーズで倒して次のウェーブに入るときも回復し、クールダウンが減る', () => {
     const b = setup([enemy('a', 20, [IDLE]), enemy('b', 1e9, [IDLE])])
     b.hp = 50
-    b.proceed(0)
+    begin(b, 0)
     while (b.waveIndex === 0) b.type(b.prompt!.session.guide().rest[0], 10)
     expect(b.hp).toBe(52)
     expect(b.report.heal).toBe(2)
@@ -243,7 +252,7 @@ describe('編成と保存', () => {
     let now = 0
     while (!b.ended) {
       now += 100
-      if (b.phase === 'command') b.proceed(now)
+      if (b.phase === 'command') begin(b, now)
       else if (b.prompt && (b.phase === 'attack' || b.phase === 'defense')) b.type(b.prompt.session.guide().rest[0], now)
       else b.tick(now)
     }

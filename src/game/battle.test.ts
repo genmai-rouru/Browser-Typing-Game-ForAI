@@ -29,6 +29,13 @@ import {
 } from './save.ts'
 import type { EnemyAction, EnemyDef, GenreId, RequestDef } from './types.ts'
 
+/** 攻撃フェーズに入り、最初の正しい打鍵でタイマーを動かします。 */
+function begin(battle: Battle, now: number): void {
+  battle.proceed(now)
+  if (battle.prompt) battle.type(battle.prompt.session.guide().rest[0], now)
+  battle.drainEvents()
+}
+
 /** 再現性のある乱数。 */
 function seeded(seed = 1): () => number {
   let s = seed
@@ -91,7 +98,7 @@ function typeGuide(battle: Battle, count: number, now: number): BattleEvent[] {
 
 /** 攻撃フェーズを何もせずに終わらせ、防御フェーズの入力開始まで進めます。 */
 function toDefense(battle: Battle, start: number): number {
-  battle.proceed(start)
+  begin(battle, start)
   battle.tick(start + ATTACK_TIME_MS)
   expect(battle.phase).toBe('defenseIntro')
   battle.tick(start + ATTACK_TIME_MS + DEFENSE_INTRO_MS)
@@ -142,9 +149,46 @@ describe('ターンの流れ', () => {
     expect(b.prompt).not.toBeNull()
   })
 
+  it('攻撃フェーズのタイマーは、お題をセットしただけでは動かず、最初の正しい打鍵で動き出す', () => {
+    const b = setup({ enemies: [enemy('a', 1e9, [IDLE])] })
+    b.proceed(0)
+    expect(b.waitingStart).toBe(true)
+    b.tick(60_000)
+    expect(b.phase).toBe('attack')
+    expect(b.timeLeftMs).toBe(ATTACK_TIME_MS)
+    // ミスではタイマーは動かない（ミスとしては数える）。
+    b.type(';', 60_000)
+    expect(b.waitingStart).toBe(true)
+    expect(b.stats.misses).toBe(1)
+    b.tick(61_000)
+    expect(b.timeLeftMs).toBe(ATTACK_TIME_MS)
+    // 正しい打鍵で動き出す。
+    b.type(b.prompt!.session.guide().rest[0], 61_000)
+    expect(b.waitingStart).toBe(false)
+    b.tick(62_000)
+    expect(b.timeLeftMs).toBe(ATTACK_TIME_MS - 1000)
+  })
+
+  it('タイマーが動き出す前は、疲労による HP の減少も起きない', () => {
+    const b = setup({ enemies: [enemy('a', 1e9, [IDLE])] })
+    b.turn = FATIGUE_START_TURN
+    b.proceed(0)
+    const hp = b.hp
+    b.tick(30_000)
+    expect(b.hp).toBe(hp)
+  })
+
+  it('タイマーが動き出す前にジャンルを切り替えると、セット済みのお題もその場で置き換わる', () => {
+    const b = setup({ rng: seeded(5) })
+    b.proceed(0)
+    expect(b.switchGenre('society')).toBe(true)
+    expect(b.prompt!.genre).toBe('society')
+    expect(b.next.genre).toBe('society')
+  })
+
   it('1 打鍵ごとに「攻撃力 × キー強化」のダメージ。打ち切ると追撃が入る', () => {
     const b = setup()
-    b.proceed(0)
+    begin(b, 0)
     const hits = typeGuide(b, 2, 10).filter((e) => e.type === 'hit')
     expect(hits.map((e) => e.amount)).toEqual([10, 10])
     const first = b.prompt
@@ -156,31 +200,31 @@ describe('ターンの流れ', () => {
 
   it('強化したキーはダメージが伸びる', () => {
     const b = setup({ loadout: { keyLevels: Object.fromEntries('abcdefghijklmnopqrstuvwxyz-'.split('').map((k) => [k, 5])) } })
-    b.proceed(0)
+    begin(b, 0)
     expect(typeGuide(b, 1, 10)[0]).toMatchObject({ type: 'hit', amount: 15 })
   })
 
   it('会心は 2 倍', () => {
     const b = setup({ loadout: { stats: { ...playerStats(1), crt: 100 } } })
-    b.proceed(0)
+    begin(b, 0)
     expect(typeGuide(b, 1, 10)[0]).toMatchObject({ amount: 20, crit: true })
   })
 
   it('非攻撃の行動なら、防御フェーズを飛ばしてコマンドフェーズに戻る', () => {
     const b = setup({ enemies: [enemy('a', 1e9, [IDLE])] })
-    b.proceed(0)
-    typeGuide(b, 3, 100)
+    begin(b, 0)
+    typeGuide(b, 2, 100)
     b.tick(ATTACK_TIME_MS)
     expect(b.phase).toBe('command')
     expect(b.report).toMatchObject({ kind: 'turn', turn: 1, strokes: 3, damage: 30, action: IDLE, defense: null })
-    b.proceed(ATTACK_TIME_MS + 5000)
+    begin(b, ATTACK_TIME_MS + 5000)
     expect(b.turn).toBe(2)
     expect(b.timeLeftMs).toBe(ATTACK_TIME_MS)
   })
 
   it('残り 2 秒になると、敵の行動を予告する', () => {
     const b = setup({ enemies: [enemy('a', 1e9, [ATTACK])] })
-    b.proceed(0)
+    begin(b, 0)
     b.tick(ATTACK_TIME_MS - 2001)
     expect(b.forecast).toBeNull()
     b.tick(ATTACK_TIME_MS - 2000)
@@ -189,10 +233,10 @@ describe('ターンの流れ', () => {
 
   it('行動は決まった順番で繰り返す', () => {
     const b = setup({ enemies: [enemy('a', 1e9, [IDLE, ATTACK])] })
-    b.proceed(0)
+    begin(b, 0)
     b.tick(ATTACK_TIME_MS)
     expect(b.report.action).toEqual(IDLE)
-    b.proceed(40000)
+    begin(b, 40000)
     b.tick(40000 + ATTACK_TIME_MS)
     expect(b.phase).toBe('defenseIntro')
     expect(b.forecast).toEqual(ATTACK)
@@ -208,7 +252,7 @@ describe('ターンの流れ', () => {
     expect(patternIndex(target, 1)).toBe(0)
     expect(patternIndex(target, 0.5)).toBe(1)
     const b = setup({ enemies: [target] })
-    b.proceed(0)
+    begin(b, 0)
     typeGuide(b, 5, 10)
     b.tick(ATTACK_TIME_MS)
     expect(b.forecast).toEqual(STRONG)
@@ -229,7 +273,7 @@ describe('防御フェーズ', () => {
 
   it('お題を出した直後の短い間は入力を受け付けない', () => {
     const b = setup({ enemies: [enemy('a', 1e9, [ATTACK])] })
-    b.proceed(0)
+    begin(b, 0)
     b.tick(ATTACK_TIME_MS)
     b.type('1', ATTACK_TIME_MS + 100)
     expect(b.stats.misses).toBe(0)
@@ -325,7 +369,7 @@ describe('MP と校正力', () => {
 
   it('攻撃フェーズのタイポでも校正力が減る', () => {
     const b = setup()
-    b.proceed(0)
+    begin(b, 0)
     b.type('1', 10)
     b.type('1', 20)
     expect(b.prr).toBe(28)
@@ -344,7 +388,7 @@ describe('MP と校正力', () => {
 
   it('どのジャンルも打てなくなると、消費 0 の通常攻撃になる', () => {
     const b = setup({ loadout: { stats: { ...playerStats(1), maxMp: 1 } } })
-    b.proceed(0)
+    begin(b, 0)
     const first = b.prompt
     expect(first!.genre).toBe('school')
     while (b.prompt === first) typeGuide(b, 1, 10)
@@ -360,7 +404,7 @@ describe('MP と校正力', () => {
   it('いまのジャンルだけ MP が足りないときは、切り替えるまで打てない', () => {
     const b = setup({ loadout: { stats: { ...playerStats(1), maxMp: 3 } } })
     b.switchGenre('society')
-    b.proceed(0)
+    begin(b, 0)
     const first = b.prompt
     while (b.prompt === first) typeGuide(b, 1, 10)
     expect(b.mp).toBe(1)
@@ -398,7 +442,7 @@ describe('ジャンルのセットと切替', () => {
 
   it('MP は、実際に打ち始めたお題のジャンルぶんだけ消費する', () => {
     const b = setup({ rng: seeded(3) })
-    b.proceed(0)
+    begin(b, 0)
     b.switchGenre('society')
     typeGuide(b, 1, 10)
     expect(b.mp).toBe(50 - MP_COST.school)
@@ -407,7 +451,7 @@ describe('ジャンルのセットと切替', () => {
   it('コマンドフェーズで切り替えると、次のターンの最初のお題から反映される', () => {
     const b = setup()
     b.switchGenre('nature')
-    b.proceed(0)
+    begin(b, 0)
     expect(b.prompt!.genre).toBe('nature')
   })
 
@@ -454,7 +498,7 @@ describe('ジャンルのセットと切替', () => {
 describe('ウェーブ', () => {
   it('敵を倒すと即座に次のウェーブへ。HP・MP は引き継ぎ、校正力だけ少し回復する', () => {
     const b = setup({ enemies: [enemy('a', 30, [ATTACK]), enemy('b', 1e9, [IDLE])] })
-    b.proceed(0)
+    begin(b, 0)
     b.type('1', 5)
     b.hp = 60
     const events = typeGuide(b, 5, 10)
@@ -467,14 +511,14 @@ describe('ウェーブ', () => {
     expect(b.hp).toBe(60)
     expect(b.mp).toBe(49) // MP は引き継ぐだけで、回復しない
     expect(b.prr).toBe(30) // 1 減って 29、10% 回復して上限の 30
-    b.proceed(5000)
+    begin(b, 5000)
     expect(b.timeLeftMs).toBe(ATTACK_TIME_MS)
     expect(b.turn).toBe(1)
   })
 
   it('最後の敵を倒すと勝利', () => {
     const b = setup({ enemies: [enemy('a', 25, [ATTACK])] })
-    b.proceed(0)
+    begin(b, 0)
     const events = typeGuide(b, 5, 10)
     expect(b.phase).toBe('won')
     expect(events).toContainEqual({ type: 'end', status: 'won' })
@@ -494,12 +538,12 @@ describe('疲労', () => {
     const b = setup({ enemies: [enemy('a', 2000, [IDLE]), enemy('b', 1e9, [IDLE])] })
     let now = 0
     for (let turn = 1; turn < FATIGUE_START_TURN; turn++) {
-      b.proceed(now)
+      begin(b, now)
       now += ATTACK_TIME_MS
       b.tick(now)
     }
     expect(b.hp).toBe(100)
-    b.proceed(now)
+    begin(b, now)
     expect(b.turn).toBe(FATIGUE_START_TURN)
     expect(b.fatigue).toBe(1)
     expect(typeGuide(b, 1, now + 1)[0]).toMatchObject({ type: 'hit', amount: 9 })
@@ -507,7 +551,7 @@ describe('疲労', () => {
     expect(b.hp).toBe(95) // 毎秒、最大 HP の 1%
     // 倒して次のウェーブへ進むと解除。
     while (b.waveIndex === 0) typeGuide(b, 1, now + 5_001)
-    b.proceed(now + 20_000)
+    begin(b, now + 20_000)
     expect(b.fatigue).toBe(0)
     b.tick(now + 25_000)
     expect(b.hp).toBe(95)
@@ -517,7 +561,7 @@ describe('疲労', () => {
     const b = setup()
     let now = 0
     for (let turn = 1; turn <= 80 && !b.ended; turn++) {
-      b.proceed(now)
+      begin(b, now)
       now += ATTACK_TIME_MS
       b.tick(now)
     }
@@ -528,12 +572,12 @@ describe('疲労', () => {
 describe('一時停止', () => {
   it('止めている間は時間が進まず、入力も受け付けない', () => {
     const b = setup()
-    b.proceed(0)
+    begin(b, 0)
     b.pause(5000)
     b.tick(20000)
     expect(b.timeLeftMs).toBe(ATTACK_TIME_MS - 5000)
     b.type(b.prompt!.session.guide().rest[0], 20000)
-    expect(b.stats.strokes).toBe(0)
+    expect(b.stats.strokes).toBe(1)
     b.resume(60000)
     b.tick(61000)
     expect(b.timeLeftMs).toBe(ATTACK_TIME_MS - 6000)
@@ -541,14 +585,14 @@ describe('一時停止', () => {
 
   it('再開後 0.5 秒は入力が無効で、ミスにも数えない', () => {
     const b = setup()
-    b.proceed(0)
+    begin(b, 0)
     b.pause(1000)
     b.resume(2000)
     b.type('1', 2000 + RESUME_INPUT_LOCK_MS - 1)
     expect(b.stats.misses).toBe(0)
     expect(b.isInputLocked(2000 + RESUME_INPUT_LOCK_MS - 1)).toBe(true)
     b.type(b.prompt!.session.guide().rest[0], 2000 + RESUME_INPUT_LOCK_MS)
-    expect(b.stats.strokes).toBe(1)
+    expect(b.stats.strokes).toBe(2)
   })
 })
 
@@ -559,7 +603,7 @@ describe('報酬と記録', () => {
     b.tick(0)
     let now = 0
     while (!b.ended) {
-      if (b.phase === 'command') b.proceed(now)
+      if (b.phase === 'command') begin(b, now)
       now += 100
       if (b.phase === 'attack' || b.phase === 'defense') typeGuide(b, 1, now)
       else b.tick(now)
@@ -576,7 +620,7 @@ describe('報酬と記録', () => {
   it('敗北時は経験値のみ受け取れる', () => {
     const save = createSave()
     const b = setup({ enemies: [enemy('a', 1e9, [STRONG], { attack: 200 })] })
-    b.proceed(0)
+    begin(b, 0)
     typeGuide(b, 10, 100)
     const start = ATTACK_TIME_MS + DEFENSE_INTRO_MS
     b.tick(ATTACK_TIME_MS)
@@ -595,16 +639,21 @@ describe('報酬と記録', () => {
   it('kpm は入力できた時間で、rkpm は初速を除いた時間で計算する', () => {
     const save = createSave()
     const b = setup({ enemies: [enemy('a', 1e9, [IDLE])] })
+    // タイマーが動き出すまでの 5 秒は、どちらの計算にも含めない。
+    const start = 5000
     b.proceed(0)
-    // 最初の 1 打鍵まで 4 秒待ち、残りの時間で 1 つのお題の途中まで 3 打鍵する。
-    const wait = 4000
-    for (let i = 0; i < 3; i++) typeGuide(b, 1, wait + i * 1000)
-    expect(b.prompt!.session.finished).toBe(false)
-    b.tick(ATTACK_TIME_MS)
+    // 最初のお題を打ち切り、次のお題の 1 打鍵目まで 3 秒待ってから 2 打鍵する。
+    const first = b.prompt
+    let strokes = 0
+    while (b.prompt === first) strokes += typeGuide(b, 1, start).filter((e) => e.type === 'hit').length
+    const wait = 3000
+    typeGuide(b, 2, start + wait)
+    strokes += 2
+    b.tick(start + ATTACK_TIME_MS)
     const { summary } = applyBattle(save, b)
-    expect(summary.strokes).toBe(3)
-    expect(summary.kpm).toBe(Math.round((3 / ATTACK_TIME_MS) * 60_000))
-    expect(summary.rkpm).toBe(Math.round((3 / (ATTACK_TIME_MS - wait)) * 60_000))
+    expect(summary.strokes).toBe(strokes)
+    expect(summary.kpm).toBe(Math.round((strokes / ATTACK_TIME_MS) * 60_000))
+    expect(summary.rkpm).toBe(Math.round((strokes / (ATTACK_TIME_MS - wait)) * 60_000))
   })
 
   it('キー強化: お金を払ってレベルが上がる。足りなければ変化しない', () => {
@@ -645,7 +694,7 @@ describe('乱数を変えても進行が止まらない', () => {
     let now = 0
     for (let guard = 0; guard < 200_000 && !b.ended; guard++) {
       now += 150
-      if (b.phase === 'command') b.proceed(now)
+      if (b.phase === 'command') begin(b, now)
       else if (rng() < 0.03) b.cycleGenre(1)
       else if (b.prompt && (b.phase === 'attack' || b.phase === 'defense')) {
         b.type(rng() < 0.05 ? '1' : b.prompt.session.guide().rest[0], now)
