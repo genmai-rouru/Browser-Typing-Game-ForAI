@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   ATTACK_TIME_MS,
   DEFENSE_INTRO_MS,
+  FORECAST_MS,
   FATIGUE_START_TURN,
   MAX_GENRE_SLOTS,
   MP_COST,
@@ -13,10 +14,9 @@ import {
   fatigueStacks,
   keyUpgradeCost,
   playerStats,
-  slotIndexOfKey,
   slotKey,
 } from './balance.ts'
-import { Battle, type BattleEvent, type Loadout } from './battle.ts'
+import { Battle, type BattleEvent, type Loadout, type PromptGenre } from './battle.ts'
 import { ENEMIES, REQUESTS, enemyById, patternIndex } from './enemies.ts'
 import { applyBattle, upgradeKey } from './rewards.ts'
 import {
@@ -30,8 +30,8 @@ import {
 import type { EnemyAction, EnemyDef, GenreId, RequestDef } from './types.ts'
 
 /** 攻撃フェーズに入り、最初の正しい打鍵でタイマーを動かします。 */
-function begin(battle: Battle, now: number): void {
-  battle.proceed(now)
+function begin(battle: Battle, now: number, genre: PromptGenre = 'school'): void {
+  battle.proceed(now, genre)
   if (battle.prompt) battle.type(battle.prompt.session.guide().rest[0], now)
   battle.drainEvents()
 }
@@ -142,7 +142,7 @@ describe('ターンの流れ', () => {
     expect(b.prompt).toBeNull()
     b.type('a', 0)
     expect(b.stats.strokes).toBe(0)
-    expect(b.proceed(0)).toBe(true)
+    expect(b.proceed(0, 'school')).toBe(true)
     expect(b.phase).toBe('attack')
     expect(b.turn).toBe(1)
     expect(b.timeLeftMs).toBe(ATTACK_TIME_MS)
@@ -151,7 +151,7 @@ describe('ターンの流れ', () => {
 
   it('攻撃フェーズのタイマーは、お題をセットしただけでは動かず、最初の正しい打鍵で動き出す', () => {
     const b = setup({ enemies: [enemy('a', 1e9, [IDLE])] })
-    b.proceed(0)
+    b.proceed(0, 'school')
     expect(b.waitingStart).toBe(true)
     b.tick(60_000)
     expect(b.phase).toBe('attack')
@@ -172,18 +172,10 @@ describe('ターンの流れ', () => {
   it('タイマーが動き出す前は、疲労による HP の減少も起きない', () => {
     const b = setup({ enemies: [enemy('a', 1e9, [IDLE])] })
     b.turn = FATIGUE_START_TURN
-    b.proceed(0)
+    b.proceed(0, 'school')
     const hp = b.hp
     b.tick(30_000)
     expect(b.hp).toBe(hp)
-  })
-
-  it('タイマーが動き出す前にジャンルを切り替えると、セット済みのお題もその場で置き換わる', () => {
-    const b = setup({ rng: seeded(5) })
-    b.proceed(0)
-    expect(b.switchGenre('society')).toBe(true)
-    expect(b.prompt!.genre).toBe('society')
-    expect(b.next.genre).toBe('society')
   })
 
   it('1 打鍵ごとに「攻撃力 × キー強化」のダメージ。打ち切ると追撃が入る', () => {
@@ -359,7 +351,7 @@ describe('防御フェーズ', () => {
 describe('MP と校正力', () => {
   it('お題を打ち始めた瞬間に、ジャンルの MP を消費する', () => {
     const b = setup()
-    b.proceed(0)
+    b.proceed(0, 'school')
     expect(b.mp).toBe(50)
     b.type('1', 10) // ミスでは消費しない
     expect(b.mp).toBe(50)
@@ -376,97 +368,74 @@ describe('MP と校正力', () => {
     expect(b.stats.misses).toBe(2)
   })
 
-  it('MP が足りないジャンルには切り替えられない', () => {
-    const b = setup({ loadout: { stats: { ...playerStats(1), maxMp: 1 } } })
-    expect(b.canUseGenre('school')).toBe(true)
-    expect(b.canUseGenre('society')).toBe(false)
-    expect(b.switchGenre('society')).toBe(false)
-    expect(b.switchGenre('food')).toBe(true)
-    b.cycleGenre(1)
-    expect(b.genre).toBe('school')
-  })
-
-  it('どのジャンルも打てなくなると、消費 0 の通常攻撃になる', () => {
-    const b = setup({ loadout: { stats: { ...playerStats(1), maxMp: 1 } } })
-    begin(b, 0)
-    const first = b.prompt
-    expect(first!.genre).toBe('school')
-    while (b.prompt === first) typeGuide(b, 1, 10)
-    expect(b.mp).toBe(0)
-    expect(b.outOfMp).toBe(true)
+  it('「攻撃」は MP を使わない通常攻撃のお題を打つ', () => {
+    const b = setup()
+    begin(b, 0, 'basic')
     expect(b.prompt!.genre).toBe('basic')
-    const hp = b.enemyHp
-    typeGuide(b, 1, 20)
-    expect(b.enemyHp).toBe(hp - 10)
-    expect(b.mp).toBe(0)
+    expect(b.prompt!.kind).toBe('word')
+    typeGuide(b, 3, 10)
+    expect(b.mp).toBe(50)
+    expect(b.next.genre).toBe('basic')
   })
 
-  it('いまのジャンルだけ MP が足りないときは、切り替えるまで打てない', () => {
-    const b = setup({ loadout: { stats: { ...playerStats(1), maxMp: 3 } } })
-    b.switchGenre('society')
-    begin(b, 0)
+  it('「スキル」は選んだジャンルのお題を打ち、続くお題も同じジャンルになる', () => {
+    const b = setup({ rng: seeded(3) })
+    begin(b, 0, 'nature')
+    expect(b.prompt!.genre).toBe('nature')
+    expect(b.next.genre).toBe('nature')
+    expect(b.genre).toBe('nature') // 最後に使ったジャンルとして覚える
     const first = b.prompt
     while (b.prompt === first) typeGuide(b, 1, 10)
+    typeGuide(b, 1, 20)
+    expect(b.prompt!.genre).toBe('nature')
+    expect(b.mp).toBe(50 - MP_COST.nature * 2)
+  })
+
+  it('MP が足りないジャンルや、セットに無いジャンルはスキルに選べない', () => {
+    const b = setup({ loadout: { stats: { ...playerStats(1), maxMp: 1 }, genres: ['school', 'society'] } })
+    expect(b.canUseGenreSkill('school')).toBe(true)
+    expect(b.canUseGenreSkill('society')).toBe(false)
+    expect(b.canUseGenreSkill('food')).toBe(false)
+    expect(b.proceed(0, 'society')).toBe(false)
+    expect(b.proceed(0, 'food')).toBe(false)
+    expect(b.phase).toBe('command')
+    expect(b.proceed(0, 'basic')).toBe(true)
+  })
+
+  it('次のお題の最初の打鍵で MP が足りなければ「魔力が足りない」で強制終了。攻撃なら予告を 2 秒出してから防御へ', () => {
+    const b = setup({ enemies: [enemy('a', 1e9, [ATTACK])], loadout: { stats: { ...playerStats(1), maxMp: 3 } } })
+    begin(b, 0, 'society')
+    const first = b.prompt
+    while (b.prompt === first) typeGuide(b, 1, 100)
     expect(b.mp).toBe(1)
-    expect(b.blocked).toBe(true)
-    b.type(b.prompt!.session.guide().rest[0], 20)
-    expect(b.drainEvents()).toContainEqual({ type: 'mpShort' })
-    expect(b.prompt!.session.typedCount).toBe(0)
-    // 打てないお題は、切り替えた時点でその場で置き換わる。
-    expect(b.switchGenre('school')).toBe(true)
-    expect(b.blocked).toBe(false)
-    expect(b.prompt!.genre).toBe('school')
+    // 次のお題は表示されているが、打ち始めると MP が足りない。
+    expect(b.phase).toBe('attack')
+    b.type(b.prompt!.session.guide().rest[0], 200)
+    expect(b.drainEvents()).toContainEqual({ type: 'mpOut' })
+    expect(b.phase).toBe('forecast')
+    expect(b.prompt).toBeNull()
+    expect(b.forecast).toEqual(ATTACK)
+    expect(b.timeLeftMs).toBe(FORECAST_MS)
+    b.tick(200 + FORECAST_MS - 1)
+    expect(b.phase).toBe('forecast')
+    b.tick(200 + FORECAST_MS)
+    expect(b.phase).toBe('defenseIntro')
+    // 予告ありなので、防御のお題タイマーは短くならない。
+    expect(b.defense!.surprised).toBe(false)
+  })
+
+  it('強制終了したとき、敵が非攻撃なら予告を出さずにコマンドフェーズへ戻る', () => {
+    const b = setup({ enemies: [enemy('a', 1e9, [IDLE])], loadout: { stats: { ...playerStats(1), maxMp: 3 } } })
+    begin(b, 0, 'society')
+    const first = b.prompt
+    while (b.prompt === first) typeGuide(b, 1, 100)
+    b.type(';', 200) // ミスでも、最初の打鍵なので判定される
+    expect(b.phase).toBe('command')
+    expect(b.report).toMatchObject({ kind: 'turn', action: IDLE, mpOut: true })
   })
 })
 
-describe('ジャンルのセットと切替', () => {
-  it('切り替えても入力中のお題は変わらず、次のお題から反映される', () => {
-    const b = setup({ rng: seeded(3) })
-    b.proceed(0)
-    const current = b.prompt!
-    typeGuide(b, 2, 10)
-    expect(b.switchGenre('society')).toBe(true)
-    expect(b.genre).toBe('society')
-    expect(b.prompt).toBe(current)
-    expect(current.session.typedCount).toBe(2)
-    expect(b.next.genre).toBe('society')
-    // 続けて切り替えると、次のお題が上書きされる。
-    expect(b.switchGenre('food')).toBe(true)
-    expect(b.prompt).toBe(current)
-    expect(b.next.genre).toBe('food')
-    const upcoming = b.next.entry
-    while (b.prompt === current) typeGuide(b, 1, 20)
-    expect(b.prompt!.genre).toBe('food')
-    expect(b.prompt!.entry).toBe(upcoming)
-  })
-
-  it('MP は、実際に打ち始めたお題のジャンルぶんだけ消費する', () => {
-    const b = setup({ rng: seeded(3) })
-    begin(b, 0)
-    b.switchGenre('society')
-    typeGuide(b, 1, 10)
-    expect(b.mp).toBe(50 - MP_COST.school)
-  })
-
-  it('コマンドフェーズで切り替えると、次のターンの最初のお題から反映される', () => {
-    const b = setup()
-    b.switchGenre('nature')
-    begin(b, 0)
-    expect(b.prompt!.genre).toBe('nature')
-  })
-
-  it('セットに入っているジャンルだけを、並び順どおりに切り替えられる', () => {
-    const b = setup({ loadout: { genres: ['food', 'school'] } })
-    expect(b.genre).toBe('school')
-    expect(b.switchGenre('nature')).toBe(false)
-    b.cycleGenre(1)
-    expect(b.genre).toBe('food')
-    b.cycleGenre(1)
-    expect(b.genre).toBe('school')
-    b.cycleGenre(-1)
-    expect(b.genre).toBe('food')
-  })
-
+describe('ジャンルのセット', () => {
   it('図書室: セットへの追加・取り外し・並べ替え', () => {
     let save = { ...createSave(), genreSet: ['school'] as GenreId[] }
     expect(removeFromGenreSet(save, 'school')).toBe(save) // 最後の 1 つは外せない
@@ -482,10 +451,9 @@ describe('ジャンルのセットと切替', () => {
     expect(buildLoadout(save).genres).toEqual(['nature', 'food'])
   })
 
-  it('枠は 10 個で、数字キー 1〜9・0 に対応する', () => {
+  it('枠は 10 個で、番号は 1〜9・0 で表す', () => {
     expect(MAX_GENRE_SLOTS).toBe(10)
     expect([0, 8, 9].map(slotKey)).toEqual(['1', '9', '0'])
-    expect(['1', '9', '0', 'a'].map(slotIndexOfKey)).toEqual([0, 8, 9, -1])
   })
 
   it('保存データのセットが壊れていたら整える', () => {
@@ -641,7 +609,7 @@ describe('報酬と記録', () => {
     const b = setup({ enemies: [enemy('a', 1e9, [IDLE])] })
     // タイマーが動き出すまでの 5 秒は、どちらの計算にも含めない。
     const start = 5000
-    b.proceed(0)
+    b.proceed(0, 'school')
     // 最初のお題を打ち切り、次のお題の 1 打鍵目まで 3 秒待ってから 2 打鍵する。
     const first = b.prompt
     let strokes = 0
@@ -694,8 +662,7 @@ describe('乱数を変えても進行が止まらない', () => {
     let now = 0
     for (let guard = 0; guard < 200_000 && !b.ended; guard++) {
       now += 150
-      if (b.phase === 'command') begin(b, now)
-      else if (rng() < 0.03) b.cycleGenre(1)
+      if (b.phase === 'command') begin(b, now, b.canUseGenreSkill('school') && rng() < 0.7 ? 'school' : 'basic')
       else if (b.prompt && (b.phase === 'attack' || b.phase === 'defense')) {
         b.type(rng() < 0.05 ? '1' : b.prompt.session.guide().rest[0], now)
       } else b.tick(now)

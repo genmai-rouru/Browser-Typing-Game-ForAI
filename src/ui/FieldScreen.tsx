@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react'
 import './field/field.css'
-import { slotIndexOfKey } from '../game/balance.ts'
+import { MP_COST } from '../game/balance.ts'
 import { Battle, type BattleEvent } from '../game/battle.ts'
 import { requestById } from '../game/enemies.ts'
+import { genreInfo } from '../game/genres.ts'
 import { ITEMS, rarityStars } from '../game/items.ts'
 import { ROLE_NAMES, describeUnique, type PartnerRole } from '../game/partners.ts'
 import type { BattleSummary } from '../game/rewards.ts'
@@ -42,14 +43,19 @@ interface Banner {
 
 /** コマンドフェーズのメニューの状態。level が開いているウィンドウです。 */
 interface CommandMenu {
-  level: 'main' | 'skill' | 'item'
+  /** genre = スキル（お題のジャンル）、support = サポートスキル、item = アイテム。 */
+  level: 'main' | SubLevel
   main: number
   sub: number
 }
 
+type SubLevel = 'genre' | 'support' | 'item'
+
 const MENU_TOP: CommandMenu = { level: 'main', main: 0, sub: 0 }
 
-type MainCommand = 'attack' | 'skill' | 'equip' | 'item'
+type MainCommand = 'attack' | SubLevel | 'equip'
+
+const SUB_TITLES: Record<SubLevel, string> = { genre: 'スキル', support: 'サポートスキル', item: 'アイテム' }
 
 const reducedMotion = () =>
   typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches
@@ -61,7 +67,7 @@ interface MenuModel<T> {
   values: T[]
 }
 
-/** サブ一覧（サポートスキル・アイテム）は、隣の説明ウィンドウの中身も持ちます。 */
+/** サブ一覧（スキル・サポートスキル・アイテム）は、隣の説明ウィンドウの中身も持ちます。 */
 interface SubMenuModel<T> extends MenuModel<T> {
   infos: MenuInfo[]
 }
@@ -70,11 +76,13 @@ function mainMenu(battle: Battle): MenuModel<MainCommand> {
   const hasParty = battle.party.length > 0
   const items = heldItems(battle)
   const itemBlocked = battle.skillUsedThisTurn
+  const anyGenre = battle.genres.some((g) => battle.canUseGenreSkill(g))
   return {
-    values: ['attack', 'skill', 'equip', 'item'],
+    values: ['attack', 'genre', 'support', 'equip', 'item'],
     entries: [
       { id: 'attack', label: '攻撃' },
-      { id: 'skill', label: 'サポートスキル', note: hasParty ? undefined : 'なし', disabled: !hasParty },
+      { id: 'genre', label: 'スキル', note: anyGenre ? undefined : 'MP 不足', disabled: !anyGenre },
+      { id: 'support', label: 'サポートスキル', note: hasParty ? undefined : 'なし', disabled: !hasParty },
       { id: 'equip', label: '装備', note: '準備中', disabled: true },
       {
         id: 'item',
@@ -87,7 +95,30 @@ function mainMenu(battle: Battle): MenuModel<MainCommand> {
   }
 }
 
-function skillMenu(battle: Battle): SubMenuModel<PartnerRole> {
+/** スキル：どのジャンルのお題で攻撃するかを選びます（図書室のセットの並び順）。 */
+function genreMenu(battle: Battle): SubMenuModel<GenreId> {
+  return {
+    values: [...battle.genres],
+    entries: battle.genres.map((g) => ({
+      id: g,
+      label: genreInfo(g).name,
+      note: `MP ${MP_COST[g]}`,
+      disabled: !battle.canUseGenreSkill(g),
+    })),
+    infos: battle.genres.map((g) => ({
+      title: genreInfo(g).name,
+      sub: `お題 1 つにつき MP ${MP_COST[g]}`,
+      lines: [
+        `いまの MP（${battle.mp}）で、あと ${Math.floor(battle.mp / MP_COST[g])} 題打てます。`,
+        'お題を打ち始めるたびに MP を消費します。戦闘中にジャンルは切り替えられません。',
+        'MP が足りなくなると「魔力が足りない！」で攻撃が終わります。',
+      ],
+      warn: battle.canUseGenre(g) ? undefined : 'MP が足りません',
+    })),
+  }
+}
+
+function supportMenu(battle: Battle): SubMenuModel<PartnerRole> {
   const roles: PartnerRole[] = ['front', 'back']
   const model: SubMenuModel<PartnerRole> = { entries: [], infos: [], values: [] }
   for (const role of roles) {
@@ -133,6 +164,12 @@ function itemMenu(battle: Battle): SubMenuModel<string> {
   }
 }
 
+function subMenu(battle: Battle, level: SubLevel): SubMenuModel<string> {
+  if (level === 'genre') return genreMenu(battle)
+  if (level === 'support') return supportMenu(battle)
+  return itemMenu(battle)
+}
+
 /** 持ち込んだアイテムのうち、まだ残っているもの（一覧の並び順）。 */
 function heldItems(battle: Battle) {
   return ITEMS.filter((def) => (battle.items[def.id] ?? 0) > 0)
@@ -146,6 +183,8 @@ export function FieldScreen({ requestId, save, summary, onFinish, onRetreat, onL
   const [banner, setBanner] = useState<Banner | null>(null)
   const [imeWarning, setImeWarning] = useState(false)
   const [pauseOpen, setPauseOpen] = useState(false)
+  /** ポーズ中に表示している内容（ポーズメニュー / 退却の確認）。 */
+  const [pauseView, setPauseView] = useState<'menu' | 'confirm'>('menu')
   const [pauseCursor, setPauseCursor] = useState(0)
   const [inputLocked, setInputLocked] = useState(false)
   const [menu, setMenu] = useState<CommandMenu>(MENU_TOP)
@@ -170,6 +209,7 @@ export function FieldScreen({ requestId, save, summary, onFinish, onRetreat, onL
     if (ended.current) return
     battle.pause(performance.now())
     setPauseCursor(0)
+    setPauseView('menu')
     setPauseOpen(true)
   }, [battle])
 
@@ -225,8 +265,8 @@ export function FieldScreen({ requestId, save, summary, onFinish, onRetreat, onL
           promptRef.current?.classList.add('is-miss')
           window.setTimeout(() => promptRef.current?.classList.remove('is-miss'), 160)
           break
-        case 'mpShort':
-          showBanner('MP が足りません。ジャンルを切り替えてください', 'info')
+        case 'mpOut':
+          showBanner('魔力が足りない！', 'danger')
           break
         case 'defenseStart':
           showBanner(`${event.action.name}！`, 'danger')
@@ -284,24 +324,30 @@ export function FieldScreen({ requestId, save, summary, onFinish, onRetreat, onL
       if (!entry || entry.disabled) return
       const command = model.values[index]
       if (command === 'attack') {
-        if (battle.proceed(performance.now())) setMenu(MENU_TOP)
-      } else if (command === 'skill') {
-        setMenu({ level: 'skill', main: index, sub: 0 })
-      } else if (command === 'item') {
-        setMenu({ level: 'item', main: index, sub: 0 })
+        // 攻撃：MP を使わない通常攻撃のお題。
+        if (battle.proceed(performance.now(), 'basic')) setMenu(MENU_TOP)
+      } else if (command === 'genre') {
+        // スキルの一覧は、前回使ったジャンルにカーソルを合わせて開きます。
+        setMenu({ level: 'genre', main: index, sub: Math.max(0, battle.genres.indexOf(battle.genre)) })
+      } else if (command === 'support' || command === 'item') {
+        setMenu({ level: command, main: index, sub: 0 })
       }
     },
     [battle],
   )
 
   const pickSub = useCallback(
-    (level: CommandMenu['level'], index: number) => {
+    (level: SubLevel, index: number) => {
       const now = performance.now()
-      if (level === 'skill') {
-        const model = skillMenu(battle)
+      if (level === 'genre') {
+        const model = genreMenu(battle)
+        if (model.entries[index]?.disabled) return
+        if (battle.proceed(now, model.values[index])) setMenu(MENU_TOP)
+      } else if (level === 'support') {
+        const model = supportMenu(battle)
         if (model.entries[index]?.disabled) return
         if (battle.useSkill(model.values[index], now)) setMenu(MENU_TOP)
-      } else if (level === 'item') {
+      } else {
         const model = itemMenu(battle)
         if (model.entries[index]?.disabled) return
         if (battle.useItem(model.values[index], now)) setMenu(MENU_TOP)
@@ -326,7 +372,7 @@ export function FieldScreen({ requestId, save, summary, onFinish, onRetreat, onL
         // いちばん上のメニューでは X は何もしません。
         return
       }
-      const length = (menu.level === 'skill' ? skillMenu(battle) : itemMenu(battle)).entries.length
+      const length = subMenu(battle, menu.level).entries.length
       if (input === 'up' || input === 'down') {
         setMenu({ ...menu, sub: moveCursor(menu.sub, input === 'up' ? -1 : 1, length) })
       } else if (input === 'confirm') {
@@ -342,11 +388,32 @@ export function FieldScreen({ requestId, save, summary, onFinish, onRetreat, onL
 
   const pickPause = useCallback(
     (index: number) => {
-      if (index === 0) closePause()
-      else onRetreat(battle)
+      if (pauseView === 'menu') {
+        if (index === 0) closePause()
+        else {
+          // 退却は確認を挟みます。最初は「いいえ」を選んだ状態です。
+          setPauseView('confirm')
+          setPauseCursor(0)
+        }
+      } else if (index === 0) {
+        setPauseView('menu')
+        setPauseCursor(1)
+      } else {
+        onRetreat(battle)
+      }
     },
-    [battle, closePause, onRetreat],
+    [battle, pauseView, closePause, onRetreat],
   )
+
+  /** ポーズ中の「戻る」。退却の確認ならポーズメニューへ、ポーズメニューなら戦闘へ戻ります。 */
+  const backInPause = useCallback(() => {
+    if (pauseView === 'confirm') {
+      setPauseView('menu')
+      setPauseCursor(1)
+    } else {
+      closePause()
+    }
+  }, [pauseView, closePause])
 
   // キー入力。
   useEffect(() => {
@@ -368,7 +435,7 @@ export function FieldScreen({ requestId, save, summary, onFinish, onRetreat, onL
         if (e.repeat && input === 'confirm') return
         if (input === 'up' || input === 'down') setPauseCursor((c) => moveCursor(c, input === 'up' ? -1 : 1, 2))
         else if (input === 'confirm') pickPause(pauseCursor)
-        else closePause()
+        else backInPause()
         return
       }
 
@@ -389,16 +456,8 @@ export function FieldScreen({ requestId, save, summary, onFinish, onRetreat, onL
         openPause()
         return
       }
-      if (battle.phase === 'attack' && (e.key === 'Tab' || e.key === 'ArrowRight' || e.key === 'ArrowLeft')) {
-        e.preventDefault()
-        const back = e.key === 'ArrowLeft' || (e.key === 'Tab' && e.shiftKey)
-        battle.cycleGenre(back ? -1 : 1)
-      } else if (battle.phase === 'attack' && slotIndexOfKey(e.key) >= 0) {
-        // 数字キーは、セットの並び順（1〜9 が 1〜9 枠目、0 が 10 枠目）に対応します。
-        e.preventDefault()
-        const genre = battle.genres[slotIndexOfKey(e.key)]
-        if (genre) battle.switchGenre(genre)
-      } else if (e.key === 'Enter' || e.key === ' ' || e.key === 'Tab') {
+      // 戦闘中にジャンルは切り替えられません（お題はコマンドの「スキル」で選びます）。
+      if (e.key === 'Enter' || e.key === ' ' || e.key === 'Tab') {
         e.preventDefault()
         return
       } else if (e.key.length === 1) {
@@ -414,19 +473,14 @@ export function FieldScreen({ requestId, save, summary, onFinish, onRetreat, onL
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [battle, handleEvents, handleMenuInput, pauseOpen, pauseCursor, pickPause, openPause, closePause])
-
-  const switchTo = (genre: GenreId) => {
-    battle.switchGenre(genre)
-    rerender()
-  }
+  }, [battle, handleEvents, handleMenuInput, pauseOpen, pauseCursor, pickPause, openPause, backInPause])
 
   // ---- 表示 ----
   const { enemy, phase } = battle
   const defending = phase === 'defense' || phase === 'defenseIntro'
   const commanding = phase === 'command' && !battle.ended
   const main = mainMenu(battle)
-  const sub = menu.level === 'skill' ? skillMenu(battle) : menu.level === 'item' ? itemMenu(battle) : null
+  const sub = menu.level === 'main' ? null : subMenu(battle, menu.level)
   const subCursor = sub ? Math.min(menu.sub, Math.max(0, sub.entries.length - 1)) : 0
   const info = sub ? sub.infos[subCursor] : null
   const [enemyX] = enemyPositions(1)
@@ -474,13 +528,13 @@ export function FieldScreen({ requestId, save, summary, onFinish, onRetreat, onL
           />
           {sub && (
             <MenuWindow
-              title={menu.level === 'skill' ? 'サポートスキル' : 'アイテム'}
+              title={SUB_TITLES[menu.level as SubLevel]}
               className="bt-sublist"
               entries={sub.entries}
               cursor={subCursor}
               active
               onHover={(index) => setMenu({ ...menu, sub: index })}
-              onPick={(index) => pickSub(menu.level, index)}
+              onPick={(index) => pickSub(menu.level as SubLevel, index)}
             />
           )}
           {info && <InfoWindow info={info} className="bt-info-pos" />}
@@ -488,7 +542,7 @@ export function FieldScreen({ requestId, save, summary, onFinish, onRetreat, onL
         </>
       )}
 
-      <PromptWindow battle={battle} onSwitchGenre={switchTo} windowRef={promptRef} />
+      <PromptWindow battle={battle} windowRef={promptRef} />
 
       <FatigueBadge stacks={battle.fatigue} />
       <StatusBar
@@ -524,6 +578,7 @@ export function FieldScreen({ requestId, save, summary, onFinish, onRetreat, onL
       {pauseOpen && (
         <PauseMenu
           title={battle.request.title}
+          confirming={pauseView === 'confirm'}
           cursor={pauseCursor}
           onHover={setPauseCursor}
           onPick={pickPause}

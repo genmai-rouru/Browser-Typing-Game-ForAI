@@ -72,7 +72,7 @@ export function LibraryScreen({ save, onChange }: Props) {
           )}
         </ol>
         <p className="panel-note">
-          番号は、戦闘中に切り替えるときの数字キーです（10 枠目は 0 キー）。Tab キーではこの順に切り替わります。最低 1 つは必要です。
+          戦闘のコマンド「スキル」の一覧には、この順に並びます。戦闘中にジャンルは切り替えられません。最低 1 つは必要です。
         </p>
       </section>
 

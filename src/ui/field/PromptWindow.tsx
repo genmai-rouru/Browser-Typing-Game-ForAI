@@ -1,8 +1,7 @@
 import type { Ref } from 'react'
-import { MAX_GENRE_SLOTS, slotKey } from '../../game/balance.ts'
 import type { Battle, DefenseResult, TurnReport } from '../../game/battle.ts'
 import { genreInfo } from '../../game/genres.ts'
-import type { GenreId, PromptKind } from '../../game/types.ts'
+import type { PromptKind } from '../../game/types.ts'
 import { ACTION_LABEL } from './display.ts'
 
 const KIND_LABEL: Record<PromptKind, string> = {
@@ -14,15 +13,14 @@ const KIND_LABEL: Record<PromptKind, string> = {
 
 interface Props {
   battle: Battle
-  onSwitchGenre: (genre: GenreId) => void
   windowRef?: Ref<HTMLDivElement>
 }
 
 /**
- * 攻撃・防御フェーズのお題ウィンドウ（半透明）と、その上に並ぶジャンル 10 枠。
+ * 攻撃・防御フェーズのお題ウィンドウ（半透明）。
  * 縁のゲージが残り時間です。防御中は枠が赤くなり、強攻撃ではさらに赤く脈打ちます。
  */
-export function PromptWindow({ battle, onSwitchGenre, windowRef }: Props) {
+export function PromptWindow({ battle, windowRef }: Props) {
   const { prompt, phase } = battle
   if (!prompt) return null
   const defending = phase === 'defense' || phase === 'defenseIntro'
@@ -36,7 +34,6 @@ export function PromptWindow({ battle, onSwitchGenre, windowRef }: Props) {
 
   return (
     <div className="bt-typing">
-      {!defending && <GenreRow battle={battle} onSwitchGenre={onSwitchGenre} />}
       <div
         ref={windowRef}
         className={`bt-prompt ${defending ? 'is-defense' : ''} ${strong ? 'is-strong' : ''}`}
@@ -59,7 +56,6 @@ export function PromptWindow({ battle, onSwitchGenre, windowRef }: Props) {
           {defending && battle.defense?.surprised && (
             <span className="bt-prompt-note is-warn">予測できず、お題タイマー −10%</span>
           )}
-          {battle.blocked && <span className="bt-prompt-note is-warn">MP 不足：ジャンルを切り替えてください</span>}
         </div>
         <p className={`bt-prompt-text kind-${prompt.kind}`}>{prompt.entry.text}</p>
         <p className="bt-prompt-kana" aria-hidden="true">
@@ -74,45 +70,11 @@ export function PromptWindow({ battle, onSwitchGenre, windowRef }: Props) {
         {!defending && (
           <p className="bt-prompt-next">
             <span className="bt-next-label">NEXT</span>
-            {battle.outOfMp ? '通常攻撃' : `${genreInfo(battle.next.genre).name}｜${battle.next.entry.text}`}
+            {battle.next.genre === 'basic' ? '通常攻撃' : genreInfo(battle.next.genre).name}｜{battle.next.entry.text}
           </p>
         )}
       </div>
     </div>
-  )
-}
-
-/** ジャンル 10 枠（数字キー 1〜9・0 が枠の順）。 */
-function GenreRow({ battle, onSwitchGenre }: { battle: Battle; onSwitchGenre: (genre: GenreId) => void }) {
-  const canSwitch = battle.phase === 'attack' && !battle.outOfMp
-  return (
-    <nav className="bt-genres" aria-label="お題のジャンル">
-      {Array.from({ length: MAX_GENRE_SLOTS }, (_, index) => {
-        const id = battle.genres[index]
-        if (!id) {
-          return (
-            <span key={`empty-${index}`} className="bt-genre is-empty">
-              <b>{slotKey(index)}</b>空き
-            </span>
-          )
-        }
-        const active = battle.genre === id && !battle.outOfMp
-        return (
-          <button
-            key={id}
-            type="button"
-            className={`bt-genre genre-${id} ${active ? 'is-active' : ''}`}
-            disabled={!canSwitch || !battle.canUseGenre(id)}
-            onClick={() => onSwitchGenre(id)}
-            tabIndex={-1}
-          >
-            <b>{slotKey(index)}</b>
-            {genreInfo(id).name}
-            <small>MP {battle.mpCost(id)}</small>
-          </button>
-        )
-      })}
-    </nav>
   )
 }
 
@@ -143,6 +105,7 @@ export function TurnReportWindow({ report, enemyName }: { report: TurnReport; en
       `敵の行動：${ACTION_LABEL[report.action.type]}「${report.action.name}」${report.defense ? ` → ${describeDefense(report.defense)}` : ''}`,
     )
   }
+  if (report.mpOut) lines.push('魔力が足りず、攻撃が途中で止まった')
   if (report.fatigueDamage > 0) lines.push(`疲労で ${report.fatigueDamage} ダメージを受けた`)
   if (report.heal > 0) lines.push(`パートナーのパッシブで HP が ${report.heal} 回復した`)
   return (

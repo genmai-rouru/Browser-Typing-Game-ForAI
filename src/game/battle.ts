@@ -46,7 +46,11 @@ import type {
  */
 
 /** いまの場面。defenseIntro は、防御お題を出してから入力を受け付けるまでの短い間です。 */
-export type Phase = 'command' | 'attack' | 'defenseIntro' | 'defense' | 'won' | 'lost'
+/**
+ * 戦闘の場面。forecast は、MP が尽きて攻撃フェーズが強制終了したあと、
+ * 防御フェーズの前に敵の行動を予告している間です。
+ */
+export type Phase = 'command' | 'attack' | 'forecast' | 'defenseIntro' | 'defense' | 'won' | 'lost'
 
 /** お題の出どころ。basic は MP が尽きたときの「通常攻撃」。 */
 export type PromptGenre = GenreId | 'basic'
@@ -90,7 +94,7 @@ export interface Prompt {
 export interface NextPrompt {
   entry: TextEntry
   kind: PromptKind
-  genre: GenreId
+  genre: PromptGenre
 }
 
 /** 防御フェーズで受けている攻撃。 */
@@ -133,6 +137,8 @@ export interface TurnReport {
   heal: number
   /** そのターンにアイテムを使った場合、その名前。 */
   usedItem?: string
+  /** そのターンに MP が尽きて、攻撃フェーズが強制終了したか。 */
+  mpOut?: boolean
   /** waveClear のとき、倒した敵の名前。 */
   defeated?: string
 }
@@ -143,7 +149,7 @@ export type BattleEvent =
   | { type: 'whiff' }
   | { type: 'burst'; amount: number; noMiss: boolean }
   | { type: 'miss' }
-  | { type: 'mpShort' }
+  | { type: 'mpOut' }
   | { type: 'defenseStart'; action: EnemyAction }
   | { type: 'playerDamage'; amount: number; result: DefenseResult }
   | { type: 'waveClear'; defeated: string }
@@ -216,7 +222,7 @@ export class Battle {
   mp: number
   /** 校正力。 */
   prr: number
-  /** 選んでいるジャンル。切り替えると「次のお題」から反映されます。 */
+  /** 最後にスキルで使ったジャンル（スキル一覧のカーソルの初期位置と、保存用）。 */
   genre: GenreId
   /** 持ち込んだジャンルのセット。 */
   readonly genres: readonly GenreId[]
@@ -238,6 +244,10 @@ export class Battle {
   private pausedFlag = false
   /** 攻撃フェーズのタイマーが動き出したか（最初の正しい打鍵で動き出します）。 */
   private attackRunning = false
+  /** このターンの攻撃で打つお題の種類（攻撃 = basic、スキル = そのジャンル）。 */
+  private attackGenre: PromptGenre = 'basic'
+  /** このターンに MP が尽きて強制終了したか。 */
+  private turnMpOut = false
   private inputLockedUntil = 0
   /** 予告した時点で確定した、このターンの敵の行動。 */
   private lockedAction: EnemyAction | null = null
@@ -316,7 +326,7 @@ export class Battle {
 
   /** 予告中、または実行中の敵の行動。予告前は null。 */
   get forecast(): EnemyAction | null {
-    if (this.phase === 'attack') return this.lockedAction
+    if (this.phase === 'attack' || this.phase === 'forecast') return this.lockedAction
     if (this.phase === 'defenseIntro' || this.phase === 'defense') return this.defense?.action ?? null
     return null
   }
@@ -325,20 +335,14 @@ export class Battle {
     return genre === 'basic' ? 0 : MP_COST[genre]
   }
 
+  /** そのジャンルのお題を 1 つ打てるだけの MP があるか。 */
   canUseGenre(genre: GenreId): boolean {
     return this.mp >= MP_COST[genre]
   }
 
-  /** どのジャンルも MP が足りず、通常攻撃しか打てない状態か。 */
-  get outOfMp(): boolean {
-    return this.genres.every((g) => !this.canUseGenre(g))
-  }
-
-  /** いまのお題が MP 不足で打てない（ジャンルの切り替えが必要な）状態か。 */
-  get blocked(): boolean {
-    const prompt = this.prompt
-    if (this.phase !== 'attack' || !prompt || prompt.paid) return false
-    return this.mp < this.mpCost(prompt.genre)
+  /** スキルとして選べるジャンルか（セットに入っていて、MP が足りる）。 */
+  canUseGenreSkill(genre: GenreId): boolean {
+    return this.phase === 'command' && !this.pausedFlag && this.genres.includes(genre) && this.canUseGenre(genre)
   }
 
   /** 防御フェーズの打ち切り率（0〜1）。 */
@@ -387,6 +391,10 @@ export class Battle {
         this.lockedAction = this.currentAction()
       }
       if (this.timeLeftMs <= 0) this.endAttack()
+    } else if (this.phase === 'forecast') {
+      // MP 切れで強制終了したあとの予告。時間が来たら敵が行動します。
+      this.timeLeftMs = Math.max(0, this.timeLeftMs - dt)
+      if (this.timeLeftMs <= 0) this.enemyAct(false)
     } else if (this.phase === 'defenseIntro') {
       this.timeLeftMs = Math.max(0, this.timeLeftMs - dt)
       if (this.timeLeftMs <= 0 && this.defense) {
@@ -422,11 +430,17 @@ export class Battle {
 
   /**
    * コマンドフェーズを終えて、攻撃フェーズに入ります。
+   * genre が 'basic' なら「攻撃」（MP を使わない通常攻撃のお題）、
+   * ジャンルなら「スキル」（そのジャンルのお題。1 つごとに MP を消費）です。
    * お題をセットするだけで、タイマーは最初の正しい打鍵で動き出します。
    */
-  proceed(now: number): boolean {
+  proceed(now: number, genre: PromptGenre): boolean {
     if (this.phase !== 'command' || this.pausedFlag) return false
+    if (genre !== 'basic' && !this.canUseGenreSkill(genre)) return false
     this.tick(now)
+    this.attackGenre = genre
+    if (genre !== 'basic') this.genre = genre
+    this.turnMpOut = false
     this.turn++
     this.stats.turns++
     this.phase = 'attack'
@@ -436,7 +450,7 @@ export class Battle {
     this.turnDamage = this.turnStrokes = this.turnMisses = this.turnFatigue = 0
     this.usedItemName = null
     this.fatigueCarry = 0
-    this.setAttackPrompt(this.next)
+    this.setAttackPrompt(this.rollAttack())
     this.next = this.rollAttack()
     return true
   }
@@ -520,51 +534,15 @@ export class Battle {
     else if (this.phase === 'defense') this.typeDefense(key)
   }
 
-  /**
-   * お題のジャンルを切り替えます。MP が足りないジャンルには切り替えられません。
-   * 入力中のお題はそのままで、「次のお題」から新しいジャンルになります。
-   * 何度切り替えても、次のお題が上書きされるだけです。
-   */
-  switchGenre(genre: GenreId): boolean {
-    if (this.phase !== 'attack' && this.phase !== 'command') return false
-    if (this.pausedFlag || genre === this.genre) return false
-    if (!this.genres.includes(genre) || !this.canUseGenre(genre)) return false
-    // 入力中のお題が MP 不足で打てないときと、タイマーが動き出す前（まだ 1 文字も
-    // 正しく打っていないとき）は、その場でお題を置き換えます。
-    const replaceNow = this.blocked || this.waitingStart
-    this.genre = genre
-    this.next = this.rollAttack()
-    if (replaceNow) {
-      this.setAttackPrompt(this.next)
-      this.next = this.rollAttack()
-    }
-    return true
-  }
-
-  /** いまのジャンルから dir（+1 / -1）方向で、次に使えるジャンルに切り替えます。 */
-  cycleGenre(dir: 1 | -1): boolean {
-    const count = this.genres.length
-    const index = this.genres.indexOf(this.genre)
-    for (let step = 1; step < count; step++) {
-      const genre = this.genres[(index + dir * step + count * step) % count]
-      if (this.switchGenre(genre)) return true
-    }
-    return false
-  }
-
   // ---- 攻撃フェーズ ----
 
   private typeAttack(key: string): void {
-    let prompt = this.prompt
+    const prompt = this.prompt
     if (!prompt) return
-    if (this.blocked) {
-      if (!this.outOfMp) {
-        this.events.push({ type: 'mpShort' })
-        return
-      }
-      // どのジャンルも打てないので、通常攻撃のお題に切り替えます。
-      this.setAttackPrompt(this.rollAttack())
-      prompt = this.prompt!
+    // お題の最初の打鍵で MP が足りなければ、攻撃フェーズを強制終了します。
+    if (!prompt.paid && this.mp < this.mpCost(prompt.genre)) {
+      this.runOutOfMp()
+      return
     }
 
     const result = prompt.session.input(key)
@@ -675,6 +653,24 @@ export class Battle {
   }
 
   /**
+   * MP が尽きて攻撃フェーズを強制終了します（「魔力が足りない！」）。
+   * 敵の行動が攻撃なら、防御フェーズの前に予告を 2 秒表示します。
+   */
+  private runOutOfMp(): void {
+    this.events.push({ type: 'mpOut' })
+    this.turnMpOut = true
+    this.collectSpellings()
+    this.prompt = null
+    this.lockedAction = this.lockedAction ?? this.currentAction()
+    if (this.lockedAction.type === 'idle') {
+      this.enemyAct(false)
+      return
+    }
+    this.phase = 'forecast'
+    this.timeLeftMs = this.timeLimitMs = FORECAST_MS
+  }
+
+  /**
    * 敵が行動します。攻撃なら防御フェーズに入ります。
    * surprised は、アイテムを使って予告なしに敵の行動を迎えた場合です。
    */
@@ -686,13 +682,13 @@ export class Battle {
       return
     }
     const strong = action.type === 'strong'
-    const pool = defensePool(this.outOfMp ? 'basic' : this.genre)
+    const pool = defensePool(this.attackGenre)
     const entry = pool[Math.floor(this.rng() * pool.length) % pool.length]
     const session = new TypingSession(entry.kana, this.prefs())
     this.prompt = {
       entry,
       kind: 'sentence',
-      genre: this.outOfMp ? 'basic' : this.genre,
+      genre: this.attackGenre,
       session,
       started: false,
       paid: true,
@@ -835,6 +831,7 @@ export class Battle {
       fatigueDamage: this.turnFatigue,
       heal: 0,
       usedItem: this.usedItemName ?? undefined,
+      mpOut: this.turnMpOut || undefined,
     }
   }
 
@@ -867,14 +864,11 @@ export class Battle {
   }
 
   private setAttackPrompt(item: NextPrompt): void {
-    // どのジャンルも打てないときは、消費 MP 0 の通常攻撃にします。
-    const basic = this.outOfMp
-    const entry = basic ? this.pick(BASIC_TEXTS) : item.entry
     this.prompt = {
-      entry,
-      kind: basic ? 'word' : item.kind,
-      genre: basic ? 'basic' : item.genre,
-      session: new TypingSession(entry.kana, this.prefs()),
+      entry: item.entry,
+      kind: item.kind,
+      genre: item.genre,
+      session: new TypingSession(item.entry.kana, this.prefs()),
       started: false,
       paid: false,
       missed: false,
@@ -882,6 +876,9 @@ export class Battle {
   }
 
   private rollAttack(): NextPrompt {
+    // 「攻撃」は MP を使わない通常攻撃のお題です。
+    const genre = this.attackGenre
+    if (genre === 'basic') return { entry: this.pick(BASIC_TEXTS), kind: 'word', genre }
     let roll = this.rng()
     let kind: PromptKind = 'word'
     for (const [k, weight] of ATTACK_KINDS) {
@@ -889,7 +886,7 @@ export class Battle {
       if (roll < weight) break
       roll -= weight
     }
-    return { entry: this.pick(TEXTS[this.genre][kind]), kind, genre: this.genre }
+    return { entry: this.pick(TEXTS[genre][kind]), kind, genre }
   }
 
   /** 最近出したお題を避けて 1 件選びます。 */

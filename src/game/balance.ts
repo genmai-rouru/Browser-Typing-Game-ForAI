@@ -48,18 +48,13 @@ export const MP_COST: Readonly<Record<GenreId, number>> = {
   nature: 2,
   food: 1,
 }
-/** 戦闘に持ち込めるジャンルの最大数。数字キー 1〜9・0 に対応します。 */
+
+/** 戦闘に持ち込めるジャンルの最大数。枠の番号は 1〜9・0 で表します。 */
 export const MAX_GENRE_SLOTS = 10
 
-/** 枠の番号（0 始まり）に対応する数字キー。10 枠目は 0 キーです。 */
+/** 枠の番号（0 始まり）の表示用の文字。10 枠目は 0 です。 */
 export function slotKey(index: number): string {
   return String((index + 1) % 10)
-}
-
-/** 数字キーに対応する枠の番号（0 始まり）。数字キーでなければ -1。 */
-export function slotIndexOfKey(key: string): number {
-  if (!/^[0-9]$/.test(key)) return -1
-  return key === '0' ? 9 : Number(key) - 1
 }
 
 // --- 校正力 ---

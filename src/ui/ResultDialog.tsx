@@ -21,21 +21,33 @@ export function ResultDialog({ summary, money, onRetry, onLeave }: Props) {
     return () => window.clearTimeout(timer)
   }, [])
 
+  // 選択中のボタン。最初は「部室へ戻る」を選んでおきます。
+  const [cursor, setCursor] = useState<'retry' | 'leave'>('leave')
+
   useEffect(() => {
     if (!armed) return
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.ctrlKey || e.metaKey || e.altKey || e.isComposing) return
-      if (e.target instanceof HTMLButtonElement && e.key === 'Enter') return
-      if (e.key === 'Enter') {
+      const key = e.key.length === 1 ? e.key.toLowerCase() : e.key
+      if (key === 'ArrowLeft' || key === 'a') {
         e.preventDefault()
-        onRetry()
-      } else if (e.key === 'Escape') {
+        setCursor('retry')
+      } else if (key === 'ArrowRight' || key === 's') {
+        e.preventDefault()
+        setCursor('leave')
+      } else if (key === 'Enter' || key === 'z' || key === ' ') {
+        e.preventDefault()
+        if (e.repeat) return
+        if (cursor === 'retry') onRetry()
+        else onLeave()
+      } else if (key === 'Escape') {
+        e.preventDefault()
         onLeave()
       }
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [armed, onRetry, onLeave])
+  }, [armed, cursor, onRetry, onLeave])
 
   const stats: Array<[string, string]> = [
     ['打鍵数', String(summary.strokes)],
@@ -135,13 +147,26 @@ export function ResultDialog({ summary, money, onRetry, onLeave }: Props) {
         </div>
 
         <footer className="bt-result-actions">
-          <button type="button" className="bt-button is-primary" onClick={onRetry} tabIndex={-1}>
-            再出現まで待機 <kbd>Enter</kbd>
+          <button
+            type="button"
+            className={`bt-button ${cursor === 'retry' ? 'is-cursor' : ''}`}
+            onMouseEnter={() => setCursor('retry')}
+            onClick={onRetry}
+            tabIndex={-1}
+          >
+            再出現まで待機
           </button>
-          <button type="button" className="bt-button" onClick={onLeave} tabIndex={-1}>
-            部室へ戻る <kbd>Esc</kbd>
+          <button
+            type="button"
+            className={`bt-button ${cursor === 'leave' ? 'is-cursor' : ''}`}
+            onMouseEnter={() => setCursor('leave')}
+            onClick={onLeave}
+            tabIndex={-1}
+          >
+            部室へ戻る
           </button>
         </footer>
+        <p className="bt-result-keys">← → / A S で選択　Enter / Z / Space で決定　Esc で部室へ戻る</p>
       </div>
     </div>
   )

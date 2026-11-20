@@ -481,8 +481,9 @@
   position: relative;
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  max-height: 336px;
+  gap: 6px;
+  /* 5 行分。それより多いときは一覧の中でスクロールします */
+  max-height: 290px;
   margin: 0;
   padding: 0;
   overflow-y: auto;
@@ -496,8 +497,8 @@
   justify-content: space-between;
   gap: 14px;
   width: 100%;
-  min-height: 56px;
-  padding: 6px 16px;
+  min-height: 52px;
+  padding: 4px 16px;
   border: 1px solid rgba(82, 229, 207, 0.3);
   background: transparent;
   color: var(--bt-text);
@@ -531,14 +532,14 @@
 
 .bt-command {
   left: 40px;
-  top: 330px;
+  top: 300px;
   width: 440px;
 }
 
 /* サブ一覧はコマンドウィンドウの右下に重ねて出します */
 .bt-sublist {
-  left: 400px;
-  top: 590px;
+  left: 440px;
+  top: 600px;
   width: 440px;
 }
 
@@ -553,8 +554,8 @@
 }
 
 .bt-info-pos {
-  left: 860px;
-  top: 590px;
+  left: 900px;
+  top: 600px;
   width: 470px;
   min-height: 200px;
 }
@@ -618,63 +619,6 @@
   flex-direction: column;
   gap: 46px;
   width: 1160px;
-}
-
-.bt-genres {
-  display: grid;
-  grid-template-columns: repeat(10, 1fr);
-  gap: 8px;
-}
-
-.bt-genre {
-  position: relative;
-  height: 56px;
-  padding: 4px 10px 4px 34px;
-  border: 2px solid var(--bt-line-soft);
-  border-radius: 4px;
-  background: var(--bt-panel-soft);
-  color: var(--bt-text);
-  font: inherit;
-  font-size: 21px;
-  line-height: 1.15;
-  text-align: left;
-  cursor: pointer;
-}
-
-.bt-genre b {
-  position: absolute;
-  left: 10px;
-  top: 6px;
-  color: var(--bt-text-soft);
-  font-family: var(--font-mono);
-  font-size: 15px;
-  font-weight: 400;
-}
-
-.bt-genre small {
-  display: block;
-  color: var(--bt-text-soft);
-  font-size: 14px;
-}
-
-.bt-genre:not(.is-empty) {
-  border-bottom: 4px solid var(--genre, var(--bt-line));
-}
-
-.bt-genre.is-active {
-  border-color: var(--bt-accent);
-  background: rgba(90, 78, 10, 0.86);
-}
-
-.bt-genre:disabled:not(.is-active) {
-  color: rgba(255, 255, 255, 0.4);
-  cursor: default;
-}
-
-.bt-genre.is-empty {
-  border-style: dashed;
-  background: rgba(6, 22, 28, 0.4);
-  color: rgba(255, 255, 255, 0.35);
 }
 
 .bt-prompt {
@@ -1064,9 +1008,17 @@
   cursor: pointer;
 }
 
-.bt-button.is-primary {
+.bt-button.is-cursor {
   border-color: var(--bt-accent);
-  background: rgba(82, 229, 207, 0.22);
+  background: rgba(82, 229, 207, 0.26);
+  box-shadow: inset 6px 0 0 var(--bt-accent);
+}
+
+.bt-result-keys {
+  margin-top: 14px;
+  color: var(--bt-text-soft);
+  font-size: 18px;
+  text-align: center;
 }
 
 /* ---- アニメーション ---- */

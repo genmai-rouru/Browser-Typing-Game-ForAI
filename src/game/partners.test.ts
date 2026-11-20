@@ -17,7 +17,7 @@ import type { EnemyAction, EnemyDef, RequestDef } from './types.ts'
 
 /** 攻撃フェーズに入り、最初の正しい打鍵でタイマーを動かします。 */
 function begin(battle: Battle, now: number): void {
-  battle.proceed(now)
+  battle.proceed(now, 'school')
   if (battle.prompt) battle.type(battle.prompt.session.guide().rest[0], now)
   battle.drainEvents()
 }
