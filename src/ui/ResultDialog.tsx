@@ -32,7 +32,7 @@ export function ResultDialog({ summary, money, onRetry, onLeave }: Props) {
       if (key === 'ArrowLeft' || key === 'a') {
         e.preventDefault()
         setCursor('retry')
-      } else if (key === 'ArrowRight' || key === 's') {
+      } else if (key === 'ArrowRight' || key === 'd') {
         e.preventDefault()
         setCursor('leave')
       } else if (key === 'Enter' || key === 'z' || key === ' ') {
@@ -166,7 +166,7 @@ export function ResultDialog({ summary, money, onRetry, onLeave }: Props) {
             部室へ戻る
           </button>
         </footer>
-        <p className="bt-result-keys">← → / A S で選択　Enter / Z / Space で決定　Esc で部室へ戻る</p>
+        <p className="bt-result-keys">← → / A D で選択　Enter / Z / Space で決定　Esc で部室へ戻る</p>
       </div>
     </div>
   )
